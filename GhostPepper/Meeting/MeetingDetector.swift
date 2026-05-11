@@ -171,8 +171,15 @@ final class MeetingDetector {
 
         // Check known meeting apps — only when frontmost to avoid false positives
         // from Zoom/Teams running in the background.
+        // Skip Teams here since we use power assertion detection above (more reliable).
         if let appName = Self.knownMeetingApps[frontmostBundleID],
            !dismissedBundleIDs.contains(frontmostBundleID) {
+            
+            // Skip Teams - we detect it via power assertion above
+            if appName == "Microsoft Teams" {
+                return
+            }
+            
             dismiss(bundleID: frontmostBundleID)
             let titles = AccessibilityWindowTitles.all(for: frontmost)
             let suggestedName = MeetingWindowHeuristics.bestMeetingTitle(in: titles, appName: appName)
