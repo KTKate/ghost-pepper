@@ -22,6 +22,10 @@ final class MeetingDetector {
 
     /// Bundle IDs that have been detected and dismissed this session (don't re-prompt).
     private var dismissedBundleIDs: Set<String> = []
+    
+    /// Track whether Teams power assertion was present in the last poll.
+    /// Used to detect transitions from no-call to active-call.
+    private var teamsAssertionWasPresentLastPoll = false
 
     /// Bundle IDs of known meeting/video call apps.
     private static let knownMeetingApps: [String: String] = [
@@ -110,11 +114,58 @@ final class MeetingDetector {
     /// Reset dismissed state (e.g. when the user re-enables detection).
     func resetDismissals() {
         dismissedBundleIDs.removeAll()
+        teamsAssertionWasPresentLastPoll = false
     }
 
     // MARK: - Private
+    
+    /// Returns true if Microsoft Teams currently holds a "Call in progress"
+    /// power assertion. This is the most reliable signal for Teams 2.0 call
+    /// state on macOS — Teams registers the assertion when a call starts and
+    /// releases it when the call ends.
+    private func isTeamsCallActive() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        process.arguments = ["-g", "assertions"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()  // discard stderr
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return false
+        }
+
+        guard let data = try? pipe.fileHandleForReading.readToEnd(),
+              let output = String(data: data, encoding: .utf8) else {
+            return false
+        }
+
+        return output.contains("Microsoft Teams Call in progress")
+    }
 
     private func checkForMeetingApps() {
+        // Check Teams power assertion first — most reliable for Teams 2.0.
+        // Only fire on transition from no-assertion to assertion-present.
+        let teamsAssertionPresent = isTeamsCallActive()
+        if teamsAssertionPresent && !teamsAssertionWasPresentLastPoll {
+            // Transition detected: Teams call just started.
+            let teamsKey = "teams-assertion"
+            if !dismissedBundleIDs.contains(teamsKey) {
+                dismiss(bundleID: teamsKey)
+                let meeting = DetectedMeeting(
+                    appName: "Microsoft Teams",
+                    bundleIdentifier: "com.microsoft.teams2",
+                    suggestedName: Self.suggestedMeetingName(appName: "Microsoft Teams")
+                )
+                onMeetingDetected?(meeting)
+            }
+        }
+        teamsAssertionWasPresentLastPoll = teamsAssertionPresent
+        
         guard let frontmost = NSWorkspace.shared.frontmostApplication,
               let frontmostBundleID = frontmost.bundleIdentifier else { return }
 
