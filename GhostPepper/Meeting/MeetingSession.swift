@@ -17,6 +17,18 @@ final class MeetingSession: ObservableObject {
     private var pipeline: ChunkedTranscriptionPipeline?
     private let transcriber: SpeechTranscriber
     private let saveDirectory: URL
+
+    /// URLs of chunk WAV files the pipeline wrote to disk during the meeting.
+    /// The pipeline's onChunkSaved callback runs off the main actor, so this
+    /// list is guarded by an explicit lock and marked nonisolated.
+    nonisolated(unsafe) private var savedChunkURLs: [SavedChunk] = []
+    nonisolated private let chunkURLLock = NSLock()
+
+    struct SavedChunk: Sendable {
+        let index: Int
+        let source: AudioStreamSource
+        let url: URL
+    }
     private let detectedMeetingAppName: String?
     private let detectedMeetingBundleIdentifier: String?
 
@@ -90,6 +102,14 @@ final class MeetingSession: ObservableObject {
             )
             self.transcript.appendSegment(segment)
             self.autoSave()
+        }
+
+        newPipeline.onChunkSaved = { [weak self] url, source in
+            guard let self = self else { return }
+            let index = MeetingSession.parseChunkIndex(from: url) ?? -1
+            self.chunkURLLock.lock()
+            self.savedChunkURLs.append(SavedChunk(index: index, source: source, url: url))
+            self.chunkURLLock.unlock()
         }
 
         capture.onAudioChunk = { [weak self, weak newPipeline] chunk in
@@ -169,6 +189,29 @@ final class MeetingSession: ObservableObject {
         inactiveMeetingPollCount = 0
 
         print("MeetingSession: stopped '\(transcript.meetingName)' — \(transcript.segments.count) segments, \(transcript.formattedDuration)")
+    }
+
+    /// Snapshot of chunk URLs collected during the meeting, sorted by chunk
+    /// index (ascending). Each chunk index may have a mic file, a system file,
+    /// both, or (rarely) neither.
+    func collectedChunks() -> [SavedChunk] {
+        chunkURLLock.lock()
+        defer { chunkURLLock.unlock() }
+        return savedChunkURLs.sorted { lhs, rhs in
+            if lhs.index != rhs.index { return lhs.index < rhs.index }
+            // Stable ordering within a chunk index: system before mic.
+            return lhs.source.sortKey < rhs.source.sortKey
+        }
+    }
+
+    /// Parse the index from a chunk filename of the form `chunk-<index>-<source>.wav`.
+    nonisolated static func parseChunkIndex(from url: URL) -> Int? {
+        let name = url.deletingPathExtension().lastPathComponent
+        let parts = name.split(separator: "-")
+        guard parts.count >= 3, parts[0] == "chunk", let index = Int(parts[1]) else {
+            return nil
+        }
+        return index
     }
 
     /// Elapsed time since meeting started.

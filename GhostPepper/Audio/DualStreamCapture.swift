@@ -4,6 +4,14 @@ import Foundation
 enum AudioStreamSource {
     case mic
     case system
+
+    /// Stable ordering value for use in sorts (system before mic).
+    var sortKey: Int {
+        switch self {
+        case .system: return 0
+        case .mic: return 1
+        }
+    }
 }
 
 /// A timestamped audio chunk from one of the two capture streams.
