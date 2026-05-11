@@ -941,7 +941,7 @@ struct SettingsView: View {
                 )
 
                 if !appState.transcriptionLabEnabled {
-                    Text("Voice-to-text history is off. Audio from dictation is not saved to disk. Meeting transcripts are saved separately as markdown files.")
+                    Text("Voice-to-text history is off. Dictation audio is not saved to disk, and meeting recordings are not retained for speaker tagging. Meeting transcripts are still written as markdown files.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -968,7 +968,7 @@ struct SettingsView: View {
                 ContentUnavailableView(
                     "No Recognized Voices",
                     systemImage: "person.crop.circle.badge.questionmark",
-                    description: Text("Run speaker tagging in History to create reusable voice prints.")
+                    description: Text("Record a meeting (or make a dictation), then run speaker tagging on it in History to create reusable voice prints.")
                 )
                 .frame(maxWidth: .infinity, minHeight: 280)
             } else {
@@ -1026,7 +1026,7 @@ struct SettingsView: View {
                     ContentUnavailableView(
                         "No Saved Recordings",
                         systemImage: "waveform",
-                        description: Text("Make a few dictations in Ghost Pepper and they will appear here.")
+                        description: Text("Dictations and recorded meetings will appear here once you've made a few.")
                     )
                     .frame(maxWidth: .infinity, minHeight: 280)
                 } else {

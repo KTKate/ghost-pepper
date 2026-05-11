@@ -66,7 +66,27 @@ final class TranscriptionLabStore {
     ) throws {
         try FileManager.default.createDirectory(at: audioDirectoryURL, withIntermediateDirectories: true)
         try audioData.write(to: audioURL(for: entry.audioFileName), options: .atomic)
+        try registerEntry(entry, stageTimings: stageTimings)
+    }
 
+    /// Insert an entry whose audio file is already on disk somewhere outside
+    /// the Lab's managed audio directory (e.g. alongside a meeting markdown).
+    /// The store records the entry and never writes, moves, or deletes the
+    /// external audio file.
+    func insertExternal(
+        _ entry: TranscriptionLabEntry,
+        stageTimings: TranscriptionLabStageTimings
+    ) throws {
+        guard entry.hasExternalAudio else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        try registerEntry(entry, stageTimings: stageTimings)
+    }
+
+    private func registerEntry(
+        _ entry: TranscriptionLabEntry,
+        stageTimings: TranscriptionLabStageTimings
+    ) throws {
         var entries = try loadEntries()
         entries.removeAll { $0.id == entry.id }
         entries.append(entry)
@@ -76,9 +96,9 @@ final class TranscriptionLabStore {
 
         let prunedEntries = Array(entries.prefix(maxEntries))
         let prunedEntryIDs = Set(entries.dropFirst(maxEntries).map(\.id))
-        let prunedFileNames = Set(entries.dropFirst(maxEntries).map(\.audioFileName))
-        for fileName in prunedFileNames {
-            try? FileManager.default.removeItem(at: audioURL(for: fileName))
+        let prunedEntries_evictees = Array(entries.dropFirst(maxEntries))
+        for evicted in prunedEntries_evictees where !evicted.hasExternalAudio {
+            try? FileManager.default.removeItem(at: audioURL(for: evicted.audioFileName))
         }
         for entryID in prunedEntryIDs {
             timings.removeValue(forKey: entryID)
@@ -92,7 +112,9 @@ final class TranscriptionLabStore {
         var entries = try loadEntries()
         guard let entry = entries.first(where: { $0.id == id }) else { return }
 
-        try? FileManager.default.removeItem(at: audioURL(for: entry.audioFileName))
+        if !entry.hasExternalAudio {
+            try? FileManager.default.removeItem(at: audioURL(for: entry.audioFileName))
+        }
         entries.removeAll { $0.id == id }
 
         var timings = try loadStageTimings()
@@ -108,6 +130,15 @@ final class TranscriptionLabStore {
 
     func audioURL(for audioFileName: String) -> URL {
         audioDirectoryURL.appendingPathComponent(audioFileName)
+    }
+
+    /// Resolve the playable audio URL for an entry, honoring an external
+    /// audio path when present.
+    func audioURL(for entry: TranscriptionLabEntry) -> URL {
+        if let externalPath = entry.externalAudioPath, !externalPath.isEmpty {
+            return URL(fileURLWithPath: externalPath)
+        }
+        return audioURL(for: entry.audioFileName)
     }
 
     private var indexURL: URL {
@@ -130,7 +161,7 @@ final class TranscriptionLabStore {
             return visibleEntries
         }
 
-        for entry in removedEntries {
+        for entry in removedEntries where !entry.hasExternalAudio {
             try? FileManager.default.removeItem(at: audioURL(for: entry.audioFileName))
         }
 

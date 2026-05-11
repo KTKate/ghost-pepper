@@ -1342,6 +1342,101 @@ class AppState: ObservableObject {
             activeMeetingSession = nil
         }
         debugLogStore.record(category: .model, message: "\(logPrefix): \(session.transcript.meetingName)")
+
+        await archiveMeetingAsLabEntry(session: session)
+    }
+
+    /// After a meeting ends, mix the saved mic + system chunks into a single
+    /// playable WAV next to the meeting markdown, then register it as a
+    /// Transcription Lab entry. This is what makes meetings show up in History
+    /// so the user can run speaker tagging and build Recognized Voices.
+    private func archiveMeetingAsLabEntry(session: MeetingSession) async {
+        guard transcriptionLabEnabled else { return }
+        guard let markdownURL = session.fileURL else { return }
+
+        let chunks = session.collectedChunks()
+        guard !chunks.isEmpty else { return }
+
+        let combined = combineMeetingChunkAudio(chunks: chunks)
+        guard combined.count >= Self.minimumArchivedRecordingSampleCount else { return }
+
+        let audioURL = markdownURL
+            .deletingPathExtension()
+            .appendingPathExtension("wav")
+
+        do {
+            let wavData = try AudioRecorder.serializePlayableArchiveAudioBuffer(combined)
+            try wavData.write(to: audioURL, options: .atomic)
+
+            let transcript = session.transcript
+            let combinedTranscript = transcript.segments
+                .map { "\($0.speaker.displayName): \($0.text)" }
+                .joined(separator: "\n")
+
+            let entry = TranscriptionLabEntry(
+                id: UUID(),
+                createdAt: transcript.startDate,
+                audioFileName: audioURL.lastPathComponent,
+                audioDuration: Double(combined.count) / Self.archivedRecordingSampleRate,
+                windowContext: nil,
+                rawTranscription: combinedTranscript.isEmpty ? nil : combinedTranscript,
+                correctedTranscription: combinedTranscript.isEmpty ? nil : combinedTranscript,
+                speechModelID: speechModel,
+                cleanupModelName: "Meeting transcript",
+                cleanupUsedFallback: false,
+                externalAudioPath: audioURL.path
+            )
+            try transcriptionLabStore.insertExternal(
+                entry,
+                stageTimings: TranscriptionLabStageTimings(
+                    transcriptionDuration: nil,
+                    cleanupDuration: nil
+                )
+            )
+            debugLogStore.record(
+                category: .model,
+                message: "Archived meeting '\(transcript.meetingName)' to lab (\(Int(entry.audioDuration))s audio)"
+            )
+        } catch {
+            debugLogStore.record(
+                category: .model,
+                message: "Failed to archive meeting to lab: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Mix the mic + system chunks for a meeting into a single mono audio
+    /// buffer. Chunks are concatenated in index order; within each index, mic
+    /// and system samples are summed (and zero-padded to match length).
+    private func combineMeetingChunkAudio(chunks: [MeetingSession.SavedChunk]) -> [Float] {
+        var byIndex: [Int: (mic: [Float], system: [Float])] = [:]
+        for chunk in chunks {
+            guard let data = try? Data(contentsOf: chunk.url),
+                  let samples = try? AudioRecorder.deserializeArchivedAudioBuffer(from: data) else {
+                continue
+            }
+            var pair = byIndex[chunk.index] ?? ([], [])
+            switch chunk.source {
+            case .mic: pair.mic = samples
+            case .system: pair.system = samples
+            }
+            byIndex[chunk.index] = pair
+        }
+
+        var combined: [Float] = []
+        for index in byIndex.keys.sorted() {
+            guard let pair = byIndex[index] else { continue }
+            let length = max(pair.mic.count, pair.system.count)
+            guard length > 0 else { continue }
+            combined.reserveCapacity(combined.count + length)
+            for sampleIndex in 0..<length {
+                let mic = sampleIndex < pair.mic.count ? pair.mic[sampleIndex] : 0
+                let sys = sampleIndex < pair.system.count ? pair.system[sampleIndex] : 0
+                let mixed = max(-1.0, min(1.0, mic + sys))
+                combined.append(mixed)
+            }
+        }
+        return combined
     }
 
     private var shortcutBindings: [ChordAction: KeyChord] {
@@ -1603,7 +1698,7 @@ class AppState: ObservableObject {
     }
 
     func transcriptionLabAudioURL(for entry: TranscriptionLabEntry) -> URL {
-        transcriptionLabStore.audioURL(for: entry.audioFileName)
+        transcriptionLabStore.audioURL(for: entry)
     }
 
     func rerunTranscriptionLabTranscription(
@@ -1903,7 +1998,7 @@ class AppState: ObservableObject {
     private func makeTranscriptionLabRunner() -> TranscriptionLabRunner {
         TranscriptionLabRunner(
             loadAudioBuffer: { [transcriptionLabStore] entry in
-                let audioData = try Data(contentsOf: transcriptionLabStore.audioURL(for: entry.audioFileName))
+                let audioData = try Data(contentsOf: transcriptionLabStore.audioURL(for: entry))
                 return try AudioRecorder.deserializeArchivedAudioBuffer(from: audioData)
             },
             loadSpeechModel: { [weak self] modelID in

@@ -15,6 +15,10 @@ struct TranscriptionLabEntry: Identifiable, Equatable, Codable {
     let speakerFilteringRan: Bool
     let speakerFilteringUsedFallback: Bool
     let diarizationSummary: DiarizationSummary?
+    /// Absolute path to an audio file outside the Lab's own audio directory.
+    /// Set for entries archived from a meeting, where the WAV lives next to the
+    /// meeting markdown so the user can see and manage it themselves.
+    let externalAudioPath: String?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -31,6 +35,7 @@ struct TranscriptionLabEntry: Identifiable, Equatable, Codable {
         case speakerFilteringRan
         case speakerFilteringUsedFallback
         case diarizationSummary
+        case externalAudioPath
     }
 
     init(
@@ -47,7 +52,8 @@ struct TranscriptionLabEntry: Identifiable, Equatable, Codable {
         speakerFilteringEnabled: Bool = false,
         speakerFilteringRan: Bool = false,
         speakerFilteringUsedFallback: Bool = false,
-        diarizationSummary: DiarizationSummary? = nil
+        diarizationSummary: DiarizationSummary? = nil,
+        externalAudioPath: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -63,6 +69,7 @@ struct TranscriptionLabEntry: Identifiable, Equatable, Codable {
         self.speakerFilteringRan = speakerFilteringRan
         self.speakerFilteringUsedFallback = speakerFilteringUsedFallback
         self.diarizationSummary = diarizationSummary
+        self.externalAudioPath = externalAudioPath
     }
 
     init(from decoder: Decoder) throws {
@@ -85,6 +92,7 @@ struct TranscriptionLabEntry: Identifiable, Equatable, Codable {
         speakerFilteringRan = try container.decode(Bool.self, forKey: .speakerFilteringRan)
         speakerFilteringUsedFallback = try container.decode(Bool.self, forKey: .speakerFilteringUsedFallback)
         diarizationSummary = try container.decodeIfPresent(DiarizationSummary.self, forKey: .diarizationSummary)
+        externalAudioPath = try container.decodeIfPresent(String.self, forKey: .externalAudioPath)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -103,5 +111,13 @@ struct TranscriptionLabEntry: Identifiable, Equatable, Codable {
         try container.encode(speakerFilteringRan, forKey: .speakerFilteringRan)
         try container.encode(speakerFilteringUsedFallback, forKey: .speakerFilteringUsedFallback)
         try container.encodeIfPresent(diarizationSummary, forKey: .diarizationSummary)
+        try container.encodeIfPresent(externalAudioPath, forKey: .externalAudioPath)
+    }
+
+    /// True when the audio file lives outside the Lab's managed audio directory
+    /// (e.g. archived from a meeting recording). The store must not move or
+    /// delete external audio when pruning or removing entries.
+    var hasExternalAudio: Bool {
+        externalAudioPath?.isEmpty == false
     }
 }
