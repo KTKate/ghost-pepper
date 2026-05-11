@@ -456,8 +456,15 @@ final class MeetingSession: ObservableObject {
     }
 
     private var supportsAutomaticEndDetection: Bool {
-        detectedMeetingAppName == "Zoom" &&
-            (detectedMeetingBundleIdentifier?.hasPrefix("us.zoom.") ?? false)
+        if detectedMeetingAppName == "Zoom" &&
+            (detectedMeetingBundleIdentifier?.hasPrefix("us.zoom.") ?? false) {
+            return true
+        }
+        if detectedMeetingAppName == "Microsoft Teams" &&
+            (detectedMeetingBundleIdentifier?.contains("teams") ?? false) {
+            return true
+        }
+        return false
     }
 
     private func checkForMeetingEnd() {
@@ -465,8 +472,21 @@ final class MeetingSession: ObservableObject {
               let detectedMeetingAppName,
               let detectedMeetingBundleIdentifier else { return }
 
+        // For Teams, check power assertion (most reliable)
+        if detectedMeetingAppName == "Microsoft Teams" {
+            if !isTeamsCallActive() {
+                inactiveMeetingPollCount += 1
+                guard inactiveMeetingPollCount >= 2 else { return }
+                requestAutomaticStop(reason: "Teams call ended (power assertion released)")
+            } else {
+                inactiveMeetingPollCount = 0
+            }
+            return
+        }
+
+        // For Zoom and others, check if app is running and window titles
         guard let meetingApp = NSRunningApplication.runningApplications(withBundleIdentifier: detectedMeetingBundleIdentifier).first else {
-            requestAutomaticStop(reason: "Zoom is no longer running")
+            requestAutomaticStop(reason: "\(detectedMeetingAppName) is no longer running")
             return
         }
 
@@ -479,6 +499,32 @@ final class MeetingSession: ObservableObject {
         inactiveMeetingPollCount += 1
         guard inactiveMeetingPollCount >= 2 else { return }
         requestAutomaticStop(reason: "meeting windows no longer look active")
+    }
+    
+    /// Returns true if Microsoft Teams currently holds a "Call in progress"
+    /// power assertion. This is the most reliable signal for Teams 2.0 call state.
+    private func isTeamsCallActive() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        process.arguments = ["-g", "assertions"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return false
+        }
+
+        guard let data = try? pipe.fileHandleForReading.readToEnd(),
+              let output = String(data: data, encoding: .utf8) else {
+            return false
+        }
+
+        return output.contains("Microsoft Teams Call in progress")
     }
 
     private func requestAutomaticStop(reason: String) {

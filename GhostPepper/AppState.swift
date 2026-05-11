@@ -88,6 +88,7 @@ class AppState: ObservableObject {
     @AppStorage("pauseMediaWhileRecording") var pauseMediaWhileRecording: Bool = true
     @AppStorage("echoCancellationEnabled") var echoCancellationEnabled: Bool = true
     @AppStorage("echoCancellationSensitivity") var echoCancellationSensitivity: Double = 0.7
+    @AppStorage("meetingAutoStartEnabled") var meetingAutoStartEnabled: Bool = false
     @Published private(set) var pushToTalkChord: KeyChord
     @Published private(set) var toggleToTalkChord: KeyChord
     @Published private(set) var pepperChatChord: KeyChord
@@ -1221,12 +1222,19 @@ class AppState: ObservableObject {
     /// Creates a new MeetingSession, starts recording, and returns it.
     /// Called by the window state when the user clicks "+" or auto-detection triggers.
     func createMeetingSession(name: String, detectedMeeting: DetectedMeeting? = nil) -> MeetingSession? {
-        guard PermissionChecker.hasScreenRecordingPermission() else {
+        debugLogStore.record(category: .model, message: "createMeetingSession called for: \(name)")
+        
+        let hasPermission = PermissionChecker.hasScreenRecordingPermission()
+        debugLogStore.record(category: .model, message: "Screen Recording permission check result: \(hasPermission)")
+        
+        guard hasPermission else {
+            debugLogStore.record(category: .model, message: "Meeting transcription blocked: Screen Recording permission not granted")
             PermissionChecker.requestScreenRecordingPermission()
             return nil
         }
 
         let saveDir = MeetingTranscriptSettings.effectiveSaveDirectory()
+        debugLogStore.record(category: .model, message: "Creating MeetingSession with save directory: \(saveDir.path)")
         let session = MeetingSession(
             meetingName: name,
             detectedMeeting: detectedMeeting,
@@ -1321,23 +1329,66 @@ class AppState: ObservableObject {
         }
 
         meetingDetector.onMeetingDetected = { [weak self] meeting in
-            guard let self = self, self.activeMeetingSession == nil else { return }
-            self.pepperChatSession.showMeetingPrompt(meeting: meeting) { [weak self] in
-                self?.startMeetingTranscription(
+            guard let self = self else { return }
+            
+            self.debugLogStore.record(category: .model, message: "Meeting detected: \(meeting.appName) - \(meeting.suggestedName)")
+            
+            guard self.activeMeetingSession == nil else {
+                self.debugLogStore.record(category: .model, message: "Meeting detection ignored: session already active")
+                return
+            }
+            
+            if self.meetingAutoStartEnabled {
+                // Auto-start without prompt - show notification
+                self.debugLogStore.record(category: .model, message: "Auto-starting meeting transcription (no prompt)")
+                self.startMeetingTranscription(
                     meetingName: meeting.suggestedName,
                     skipConsent: meeting.isVideo,
                     sourceURL: meeting.sourceURL,
                     detectedMeeting: meeting
                 )
+                
+                // Show "Transcription started" notification
+                self.showMeetingNotification(title: "Transcription Started", message: meeting.appName)
+            } else {
+                // Show confirmation prompt
+                self.debugLogStore.record(category: .model, message: "Showing meeting confirmation prompt")
+                self.pepperChatSession.showMeetingPrompt(meeting: meeting) { [weak self] in
+                    self?.debugLogStore.record(category: .model, message: "User accepted meeting prompt")
+                    self?.startMeetingTranscription(
+                        meetingName: meeting.suggestedName,
+                        skipConsent: meeting.isVideo,
+                        sourceURL: meeting.sourceURL,
+                        detectedMeeting: meeting
+                    )
+                }
+                self.pepperChatWindowController.show(session: self.pepperChatSession)
             }
-            self.pepperChatWindowController.show(session: self.pepperChatSession)
         }
 
         meetingDetector.start()
     }
 
+    private func showMeetingNotification(title: String, message: String) {
+        let notification = NSUserNotification()
+        notification.title = title
+        notification.informativeText = message
+        notification.soundName = nil // Silent
+        NSUserNotificationCenter.default.deliver(notification)
+        
+        // Auto-dismiss after 3 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            NSUserNotificationCenter.default.removeDeliveredNotification(notification)
+        }
+    }
+
     private func finishMeetingSession(_ session: MeetingSession, logPrefix: String) async {
         await session.stop()
+        
+        // Show "Transcription stopped" notification if auto-start was enabled
+        if meetingAutoStartEnabled {
+            showMeetingNotification(title: "Transcription Stopped", message: session.transcript.meetingName)
+        }
         if activeMeetingSession === session {
             activeMeetingSession = nil
         }

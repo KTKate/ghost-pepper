@@ -1847,6 +1847,17 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
+                        if appState.meetingAutoDetectEnabled {
+                            Toggle(
+                                "Auto-start transcription without confirmation",
+                                isOn: $appState.meetingAutoStartEnabled
+                            )
+
+                            Text("When enabled, meetings will start transcribing immediately without showing a confirmation prompt.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
                         Toggle(
                             "Float the meeting window while recording",
                             isOn: $appState.meetingWindowFloatsWhileRecording
