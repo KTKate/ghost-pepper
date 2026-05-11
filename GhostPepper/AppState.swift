@@ -88,7 +88,7 @@ class AppState: ObservableObject {
     @AppStorage("pauseMediaWhileRecording") var pauseMediaWhileRecording: Bool = true
     @AppStorage("echoCancellationEnabled") var echoCancellationEnabled: Bool = true
     @AppStorage("echoCancellationSensitivity") var echoCancellationSensitivity: Double = 0.7
-    @AppStorage("meetingAutoStartEnabled") var meetingAutoStartEnabled: Bool = false
+    @AppStorage("meetingAutoStartEnabled") var meetingAutoStartEnabled: Bool = true
     @Published private(set) var pushToTalkChord: KeyChord
     @Published private(set) var toggleToTalkChord: KeyChord
     @Published private(set) var pepperChatChord: KeyChord
