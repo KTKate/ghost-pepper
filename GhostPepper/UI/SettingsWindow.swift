@@ -387,14 +387,15 @@ struct SettingsView: View {
     private func refreshRequiredPermissions() {
         hasAccessibilityPermission = PermissionChecker.checkAccessibility()
         hasInputMonitoringPermission = PermissionChecker.checkInputMonitoring()
-        if hasAccessibilityPermission && hasInputMonitoringPermission {
+        hasScreenRecordingPermission = PermissionChecker.hasScreenRecordingPermission()
+        if hasAccessibilityPermission && hasInputMonitoringPermission && hasScreenRecordingPermission {
             permissionPollTimer?.invalidate()
             permissionPollTimer = nil
         }
     }
 
     private func startPermissionPollingIfNeeded() {
-        guard !hasAccessibilityPermission || !hasInputMonitoringPermission else { return }
+        guard !hasAccessibilityPermission || !hasInputMonitoringPermission || !hasScreenRecordingPermission else { return }
         guard permissionPollTimer == nil else { return }
         permissionPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
             refreshRequiredPermissions()
@@ -537,7 +538,7 @@ struct SettingsView: View {
 
     private var generalSection: some View {
         VStack(alignment: .leading, spacing: 24) {
-            if !hasAccessibilityPermission || !hasInputMonitoringPermission {
+            if !hasAccessibilityPermission || !hasInputMonitoringPermission || !hasScreenRecordingPermission {
                 SettingsCard("Permissions") {
                     VStack(alignment: .leading, spacing: 12) {
                         PermissionStatusRow(
@@ -553,8 +554,16 @@ struct SettingsView: View {
                                 PermissionChecker.openInputMonitoringSettings()
                             }
                         )
+                        PermissionStatusRow(
+                            title: "Screen Recording",
+                            isGranted: hasScreenRecordingPermission,
+                            action: {
+                                PermissionChecker.requestScreenRecordingPermission()
+                                PermissionChecker.openScreenRecordingSettings()
+                            }
+                        )
 
-                        Text("Both permissions are required for hotkeys and pasting to work reliably. If Ghost Pepper doesn't appear in Input Monitoring, click + and select it from Applications.")
+                        Text("Accessibility and Input Monitoring are required for hotkeys and pasting. Screen Recording is required for meeting transcription (system audio capture). If Ghost Pepper doesn't appear in the settings, click + and select it from Applications.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1854,6 +1863,51 @@ struct SettingsView: View {
             }
 
             if appState.meetingTranscriptEnabled {
+                SettingsCard("Echo Cancellation") {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Toggle(
+                            "Enable echo cancellation",
+                            isOn: $appState.echoCancellationEnabled
+                        )
+                        
+                        Text("Prevents duplicate transcriptions when using speakers + microphone (no headset). When your mic picks up audio from speakers, Ghost Pepper will detect and suppress the duplicate.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        if appState.echoCancellationEnabled {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Sensitivity:")
+                                        .font(.body)
+                                    Spacer()
+                                    Text(sensitivityLabel(appState.echoCancellationSensitivity))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                
+                                Slider(
+                                    value: $appState.echoCancellationSensitivity,
+                                    in: 0.5...0.9,
+                                    step: 0.1
+                                )
+                                
+                                HStack {
+                                    Text("Conservative")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text("Aggressive")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            
+                            Text("Conservative: Only suppresses obvious echoes. Aggressive: Suppresses more aggressively, may occasionally catch false positives.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 SettingsCard("Google Calendar") {
                     VStack(alignment: .leading, spacing: 12) {
                         if calendarService.isSignedIn {
@@ -1951,22 +2005,75 @@ struct SettingsView: View {
                     }
                 }
 
-                if !PermissionChecker.hasScreenRecordingPermission() {
-                    SettingsCard("Permissions") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Screen Recording permission is required to capture system audio (what other call participants say).")
+                if !hasScreenRecordingPermission {
+                    Text("Note: Screen Recording permission is required for meeting transcription. Grant it in the General settings section above.")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.orange.opacity(0.1))
+                        )
+                }
+                
+                SettingsCard("Echo Cancellation") {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Toggle(
+                            "Enable echo cancellation",
+                            isOn: $appState.echoCancellationEnabled
+                        )
+                        
+                        Text("Prevents duplicate transcriptions when using speakers + microphone (no headset). When your mic picks up audio from speakers, Ghost Pepper will detect and suppress the duplicate.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        if appState.echoCancellationEnabled {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Sensitivity:")
+                                        .font(.body)
+                                    Spacer()
+                                    Text(sensitivityLabel(appState.echoCancellationSensitivity))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                
+                                Slider(
+                                    value: $appState.echoCancellationSensitivity,
+                                    in: 0.5...0.9,
+                                    step: 0.1
+                                )
+                                
+                                HStack {
+                                    Text("Conservative")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text("Aggressive")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            
+                            Text("Conservative: Only suppresses obvious echoes. Aggressive: Suppresses more aggressively, may occasionally catch false positives.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-
-                            Button("Grant Screen Recording Permission") {
-                                PermissionChecker.requestScreenRecordingPermission()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
                         }
                     }
                 }
+
             }
+        }
+    }
+    
+    private func sensitivityLabel(_ value: Double) -> String {
+        switch value {
+        case 0.5: return "Conservative (0.5)"
+        case 0.6: return "Balanced (0.6)"
+        case 0.7: return "Balanced (0.7)"
+        case 0.8: return "Aggressive (0.8)"
+        case 0.9: return "Aggressive (0.9)"
+        default: return String(format: "%.1f", value)
         }
     }
 

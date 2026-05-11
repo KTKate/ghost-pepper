@@ -86,6 +86,8 @@ class AppState: ObservableObject {
     @AppStorage("meetingWindowFloatsWhileRecording") var meetingWindowFloatsWhileRecording: Bool = true
     @AppStorage("meetingSummaryPrompt") var meetingSummaryPrompt: String = MeetingSummaryGenerator.defaultPrompt
     @AppStorage("pauseMediaWhileRecording") var pauseMediaWhileRecording: Bool = true
+    @AppStorage("echoCancellationEnabled") var echoCancellationEnabled: Bool = true
+    @AppStorage("echoCancellationSensitivity") var echoCancellationSensitivity: Double = 0.7
     @Published private(set) var pushToTalkChord: KeyChord
     @Published private(set) var toggleToTalkChord: KeyChord
     @Published private(set) var pepperChatChord: KeyChord
@@ -1229,7 +1231,9 @@ class AppState: ObservableObject {
             meetingName: name,
             detectedMeeting: detectedMeeting,
             transcriber: transcriber,
-            saveDirectory: saveDir
+            saveDirectory: saveDir,
+            echoCancellationEnabled: echoCancellationEnabled,
+            echoCancellationSensitivity: echoCancellationSensitivity
         )
         session.onAutoStopRequested = { [weak self] session in
             Task {

@@ -6,6 +6,8 @@ struct ChunkedTranscriptResult {
     let startTime: TimeInterval
     let endTime: TimeInterval
     let text: String
+    let isEchoSuppressed: Bool
+    let echoConfidence: Double
 }
 
 /// Accumulates audio from DualStreamCapture in per-stream buffers, drains them
@@ -44,11 +46,24 @@ final class ChunkedTranscriptionPipeline {
     private let chunkDirectory: URL
 
     private let sampleRate: Double = 16000
+    
+    /// Echo cancellation engine for detecting and suppressing audio loopback
+    private let echoCancellation: EchoCancellationEngine
+    
+    /// Store recent system transcripts for cross-stream deduplication
+    private var recentSystemTranscripts: [(text: String, time: TimeInterval)] = []
+    private let maxRecentTranscripts = 10
 
-    init(transcriber: SpeechTranscriber, chunkDirectory: URL, chunkInterval: TimeInterval = 30.0) {
+    init(
+        transcriber: SpeechTranscriber,
+        chunkDirectory: URL,
+        chunkInterval: TimeInterval = 30.0,
+        echoCancellationConfig: EchoCancellationEngine.Configuration = .default
+    ) {
         self.transcriber = transcriber
         self.chunkDirectory = chunkDirectory
         self.chunkInterval = chunkInterval
+        self.echoCancellation = EchoCancellationEngine(config: echoCancellationConfig, sampleRate: sampleRate)
     }
 
     /// Start the chunked pipeline. Call this after DualStreamCapture.start().
@@ -116,18 +131,7 @@ final class ChunkedTranscriptionPipeline {
                 guard let self = self else { return }
                 defer { transcriptionSemaphore.signal() }
 
-                if !micSamples.isEmpty {
-                    await self.processChunk(
-                        samples: micSamples,
-                        source: .mic,
-                        startTime: startTime,
-                        endTime: endTime,
-                        chunkIndex: currentChunkIndex,
-                        previousTail: self.previousMicTail,
-                        updateTail: { [weak self] tail in self?.previousMicTail = tail }
-                    )
-                }
-
+                // Process system audio first (authoritative source)
                 if !systemSamples.isEmpty {
                     await self.processChunk(
                         samples: systemSamples,
@@ -136,7 +140,22 @@ final class ChunkedTranscriptionPipeline {
                         endTime: endTime,
                         chunkIndex: currentChunkIndex,
                         previousTail: self.previousSystemTail,
-                        updateTail: { [weak self] tail in self?.previousSystemTail = tail }
+                        updateTail: { [weak self] tail in self?.previousSystemTail = tail },
+                        pairedSamples: micSamples
+                    )
+                }
+
+                // Process mic audio second (check for echo)
+                if !micSamples.isEmpty {
+                    await self.processChunk(
+                        samples: micSamples,
+                        source: .mic,
+                        startTime: startTime,
+                        endTime: endTime,
+                        chunkIndex: currentChunkIndex,
+                        previousTail: self.previousMicTail,
+                        updateTail: { [weak self] tail in self?.previousMicTail = tail },
+                        pairedSamples: systemSamples
                     )
                 }
             }
@@ -151,7 +170,8 @@ final class ChunkedTranscriptionPipeline {
         endTime: TimeInterval,
         chunkIndex: Int,
         previousTail: String,
-        updateTail: @escaping (String) -> Void
+        updateTail: @escaping (String) -> Void,
+        pairedSamples: [Float]
     ) async {
         // Save chunk audio to disk for crash resilience and optional post-meeting diarization.
         let sourceLabel = source == .mic ? "mic" : "system"
@@ -175,11 +195,56 @@ final class ChunkedTranscriptionPipeline {
         let tail = words.suffix(10).joined(separator: " ")
         updateTail(tail)
 
+        // Echo detection and suppression
+        var isEchoSuppressed = false
+        var echoConfidence = 0.0
+        
+        if source == .mic && !pairedSamples.isEmpty {
+            // Check audio correlation
+            let audioResult = echoCancellation.detectEcho(
+                micSamples: samples,
+                systemSamples: pairedSamples
+            )
+            
+            if audioResult.isEcho {
+                isEchoSuppressed = true
+                echoConfidence = audioResult.confidence
+                print("ChunkedTranscriptionPipeline: Echo detected via audio correlation - \(audioResult.debugDescription)")
+            } else {
+                // Check text similarity against recent system transcripts
+                for (systemText, systemTime) in recentSystemTranscripts {
+                    let textResult = echoCancellation.detectDuplicateTranscript(
+                        micText: deduped,
+                        systemText: systemText,
+                        micTime: startTime,
+                        systemTime: systemTime
+                    )
+                    
+                    if textResult.isDuplicate {
+                        isEchoSuppressed = true
+                        echoConfidence = textResult.similarity
+                        print("ChunkedTranscriptionPipeline: Echo detected via text similarity - \(textResult.debugDescription)")
+                        break
+                    }
+                }
+            }
+        }
+        
+        // Store system transcripts for cross-stream deduplication
+        if source == .system {
+            recentSystemTranscripts.append((deduped, startTime))
+            if recentSystemTranscripts.count > maxRecentTranscripts {
+                recentSystemTranscripts.removeFirst()
+            }
+        }
+
         let result = ChunkedTranscriptResult(
             source: source,
             startTime: startTime,
             endTime: endTime,
-            text: deduped
+            text: deduped,
+            isEchoSuppressed: isEchoSuppressed,
+            echoConfidence: echoConfidence
         )
 
         await MainActor.run {

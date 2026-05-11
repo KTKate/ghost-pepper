@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -30,6 +30,7 @@
 		2BEB4B4A879A749C8B92BE44 /* CorrectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D087A4D4CD5C6D3C293AE56 /* CorrectionStore.swift */; };
 		2D74E2B753F02B4D39999E57 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40927DEAA2F7DE3C290536F7 /* main.swift */; };
 		2E80774D95EAC6D6B53A226D /* RecordingSessionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0C972BC69839C41ACA2E8C /* RecordingSessionCoordinatorTests.swift */; };
+		31D2B4922FB2569F009BE679 /* EchoCancellationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31D2B4912FB2569F009BE679 /* EchoCancellationEngine.swift */; };
 		31E37E3EDDB8A0E5011BCA54 /* GhostPepperApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF9AE24266DDCCADE832CF33 /* GhostPepperApp.swift */; };
 		3512549BBD28CC74C0137FA3 /* CorrectionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350AC3A5A34A78F96226831C /* CorrectionStoreTests.swift */; };
 		361E7532F651C1BF7F0D0724 /* TextCleaner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37863EC2F34067ED0C5B2B6F /* TextCleaner.swift */; };
@@ -194,6 +195,7 @@
 		2CD55E5B8D8B9A82E9774A2C /* AccessibilityWindowTitles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityWindowTitles.swift; sourceTree = "<group>"; };
 		2F8EC51C74573DD4A47E1CEB /* CleanupBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupBackend.swift; sourceTree = "<group>"; };
 		31AB5B6B8951B764D59443FD /* DualStreamCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualStreamCapture.swift; sourceTree = "<group>"; };
+		31D2B4912FB2569F009BE679 /* EchoCancellationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoCancellationEngine.swift; sourceTree = "<group>"; };
 		3252290627807046966D956B /* CleanupSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupSettings.swift; sourceTree = "<group>"; };
 		335E3F3AA3803E2274CF6197 /* TranscriptionLabControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionLabControllerTests.swift; sourceTree = "<group>"; };
 		338FDBA950D81CE2B3AC4EA0 /* GhostPepperTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GhostPepperTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -220,7 +222,7 @@
 		52BCF852883B9E469B61B56B /* GhostPepper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GhostPepper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		589AC554EEF132B519736D92 /* HotkeyMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitorTests.swift; sourceTree = "<group>"; };
 		59666FBC728BF70A61983188 /* PerformanceTraceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceTraceTests.swift; sourceTree = "<group>"; };
-		5D68EDD354F149B2EF3963B7 /* CleanupModelProbe */ = {isa = PBXFileReference; includeInIndex = 0; path = CleanupModelProbe; sourceTree = BUILT_PRODUCTS_DIR; };
+		5D68EDD354F149B2EF3963B7 /* CleanupModelProbe */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = CleanupModelProbe; sourceTree = BUILT_PRODUCTS_DIR; };
 		5DCEBF68EFD590E3779D72D5 /* DiarizationSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiarizationSummary.swift; sourceTree = "<group>"; };
 		5F85AD0262D40047E6FCA3D8 /* UpdaterController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterController.swift; sourceTree = "<group>"; };
 		624731D133FE2A9EB3A12740 /* MeetingTranscriptSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingTranscriptSettings.swift; sourceTree = "<group>"; };
@@ -240,7 +242,7 @@
 		7ECFAFC0144B6B9203BF4EE0 /* RecognizedVoiceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizedVoiceStoreTests.swift; sourceTree = "<group>"; };
 		80731398639640F62FFC4524 /* RecordingOCRPrefetchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingOCRPrefetchTests.swift; sourceTree = "<group>"; };
 		8348D35B3C14A52DCB5138E2 /* CleanupBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupBackend.swift; sourceTree = "<group>"; };
-		84630A373DA596D94B45E867 /* Secrets.example */ = {isa = PBXFileReference; path = Secrets.example; sourceTree = "<group>"; };
+		84630A373DA596D94B45E867 /* Secrets.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = Secrets.example; sourceTree = "<group>"; };
 		853418773B99673FB27791AC /* CleanupModelProbeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupModelProbeRunner.swift; sourceTree = "<group>"; };
 		886EA12D06680BB95FB78309 /* CleanupBackendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupBackendTests.swift; sourceTree = "<group>"; };
 		8946D31B99B17106A72D0FFA /* MeetingMarkdownWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingMarkdownWriter.swift; sourceTree = "<group>"; };
@@ -592,6 +594,7 @@
 		BD13B12B603D3A9D89A5F2C4 /* Audio */ = {
 			isa = PBXGroup;
 			children = (
+				31D2B4912FB2569F009BE679 /* EchoCancellationEngine.swift */,
 				EAF6390CFE5F526DD23C316D /* AudioDeviceManager.swift */,
 				8F5407DA5D09555EDD69CA54 /* AudioRecorder.swift */,
 				31AB5B6B8951B764D59443FD /* DualStreamCapture.swift */,
@@ -749,12 +752,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
-				TargetAttributes = {
-					5EBC085BD56A3725D371FB1A = {
-						DevelopmentTeam = BBVMGXR9AY;
-						ProvisioningStyle = Automatic;
-					};
-				};
 			};
 			buildConfigurationList = 4DD304029FEB6147483470FD /* Build configuration list for PBXProject "GhostPepper" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -772,7 +769,6 @@
 				7193259C7B8193E12A21EF21 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				E56E28037799FE95D6CB5F71 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -885,6 +881,7 @@
 				4CFBE4928A2B811D649B4140 /* TextCleanupManager.swift in Sources */,
 				5AB7257704509FD4BC36F69E /* TextPaster.swift in Sources */,
 				B648FDD8AE7E12040DF33CCA /* TranscriptionLabController.swift in Sources */,
+				31D2B4922FB2569F009BE679 /* EchoCancellationEngine.swift in Sources */,
 				7F6B796521231B6254976F79 /* TranscriptionLabEntry.swift in Sources */,
 				1AECB19E0AD630641AE8649B /* TranscriptionLabRunner.swift in Sources */,
 				DFAB770908C43B46C21F6986 /* TranscriptionLabStore.swift in Sources */,
@@ -975,7 +972,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = GhostPepper/GhostPepper.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = KSUCF6C5TK;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				INFOPLIST_FILE = GhostPepper/Info.plist;
@@ -984,6 +985,7 @@
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.github.matthartman.ghostpepper;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -1120,7 +1122,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = GhostPepper/GhostPepper.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = KSUCF6C5TK;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				INFOPLIST_FILE = GhostPepper/Info.plist;
@@ -1129,6 +1135,7 @@
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.github.matthartman.ghostpepper;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
 			};
 			name = Debug;

@@ -29,13 +29,16 @@ final class MeetingSession: ObservableObject {
     private let originalName: String
     private let ocrService: FrontmostWindowOCRService
     private var inactiveMeetingPollCount = 0
+    private let echoCancellationConfig: EchoCancellationEngine.Configuration
 
     init(
         meetingName: String,
         detectedMeeting: DetectedMeeting? = nil,
         transcriber: SpeechTranscriber,
         saveDirectory: URL,
-        ocrService: FrontmostWindowOCRService = FrontmostWindowOCRService()
+        ocrService: FrontmostWindowOCRService = FrontmostWindowOCRService(),
+        echoCancellationEnabled: Bool = true,
+        echoCancellationSensitivity: Double = 0.7
     ) {
         self.transcript = MeetingTranscript(meetingName: meetingName)
         self.transcriber = transcriber
@@ -44,6 +47,13 @@ final class MeetingSession: ObservableObject {
         self.ocrService = ocrService
         self.detectedMeetingAppName = detectedMeeting?.appName
         self.detectedMeetingBundleIdentifier = detectedMeeting?.bundleIdentifier
+        
+        // Configure echo cancellation based on user settings
+        var config = EchoCancellationEngine.Configuration.default
+        config.enabled = echoCancellationEnabled
+        config.audioCorrelationThreshold = echoCancellationSensitivity
+        config.textSimilarityThreshold = max(0.7, echoCancellationSensitivity - 0.1)
+        self.echoCancellationConfig = config
     }
 
     /// Start dual-stream capture and chunked transcription.
@@ -57,11 +67,19 @@ final class MeetingSession: ObservableObject {
 
         let newPipeline = ChunkedTranscriptionPipeline(
             transcriber: transcriber,
-            chunkDirectory: chunkDir
+            chunkDirectory: chunkDir,
+            echoCancellationConfig: echoCancellationConfig
         )
 
         newPipeline.onSegmentTranscribed = { [weak self] result in
             guard let self = self else { return }
+            
+            // Skip echo-suppressed segments (audio loopback from speakers to mic)
+            if result.isEchoSuppressed {
+                print("MeetingSession: Suppressed echo segment (confidence: \(String(format: "%.2f", result.echoConfidence))): \(result.text.prefix(50))...")
+                return
+            }
+            
             let speaker: SpeakerLabel = result.source == .mic ? .me : .remote(name: nil)
             let segment = TranscriptSegment(
                 id: UUID(),
