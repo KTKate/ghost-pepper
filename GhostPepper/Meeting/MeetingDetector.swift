@@ -151,17 +151,25 @@ final class MeetingDetector {
         // Check Teams power assertion first — most reliable for Teams 2.0.
         // Only fire on transition from no-assertion to assertion-present.
         let teamsAssertionPresent = isTeamsCallActive()
+        
+        // Clear dismissal when call ends so we can detect the next call
+        if !teamsAssertionPresent && teamsAssertionWasPresentLastPoll {
+            let teamsKey = "teams-assertion"
+            dismissedBundleIDs.remove(teamsKey)
+        }
+        
         if teamsAssertionPresent && !teamsAssertionWasPresentLastPoll {
             // Transition detected: Teams call just started.
             let teamsKey = "teams-assertion"
             if !dismissedBundleIDs.contains(teamsKey) {
-                dismiss(bundleID: teamsKey)
                 let meeting = DetectedMeeting(
                     appName: "Microsoft Teams",
                     bundleIdentifier: "com.microsoft.teams2",
                     suggestedName: Self.suggestedMeetingName(appName: "Microsoft Teams")
                 )
                 onMeetingDetected?(meeting)
+                // Dismiss AFTER callback so it can handle the detection
+                dismiss(bundleID: teamsKey)
             }
         }
         teamsAssertionWasPresentLastPoll = teamsAssertionPresent
