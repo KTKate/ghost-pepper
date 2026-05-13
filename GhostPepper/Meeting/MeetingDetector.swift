@@ -162,10 +162,18 @@ final class MeetingDetector {
             // Transition detected: Teams call just started.
             let teamsKey = "teams-assertion"
             if !dismissedBundleIDs.contains(teamsKey) {
+                // Try to get the actual meeting title from Teams windows
+                let teamsApp = NSWorkspace.shared.runningApplications.first {
+                    $0.bundleIdentifier == "com.microsoft.teams2" || $0.bundleIdentifier == "com.microsoft.teams"
+                }
+                let titles = teamsApp.map { AccessibilityWindowTitles.all(for: $0) } ?? []
+                let suggestedName = MeetingWindowHeuristics.bestMeetingTitle(in: titles, appName: "Microsoft Teams")
+                    ?? Self.suggestedMeetingName(appName: "Microsoft Teams")
+                
                 let meeting = DetectedMeeting(
                     appName: "Microsoft Teams",
                     bundleIdentifier: "com.microsoft.teams2",
-                    suggestedName: Self.suggestedMeetingName(appName: "Microsoft Teams")
+                    suggestedName: suggestedName
                 )
                 onMeetingDetected?(meeting)
                 // Dismiss AFTER callback so it can handle the detection
