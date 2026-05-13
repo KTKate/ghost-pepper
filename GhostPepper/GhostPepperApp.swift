@@ -28,22 +28,32 @@ struct GhostPepperApp: App {
                 MenuBarView(appState: appState, updaterController: lazyUpdater.controller)
             }
         } label: {
-            Group {
-                switch appState.status {
-                case .recording:
-                    Image("MenuBarIconRedDim")
-                        .renderingMode(.original)
-                case .loading:
-                    Image(systemName: "ellipsis.circle")
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.orange)
-                case .error:
-                    Image(systemName: "exclamationmark.triangle")
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.yellow)
-                default:
-                    Image("MenuBarIcon")
-                        .renderingMode(.template)
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    switch appState.status {
+                    case .recording:
+                        Image("MenuBarIconRedDim")
+                            .renderingMode(.original)
+                    case .loading:
+                        Image(systemName: "ellipsis.circle")
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.orange)
+                    case .error:
+                        Image(systemName: "exclamationmark.triangle")
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.yellow)
+                    default:
+                        Image("MenuBarIcon")
+                            .renderingMode(.template)
+                    }
+                }
+                
+                // Red dot indicator when meeting is active
+                if appState.activeMeetingSession != nil {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 6, height: 6)
+                        .offset(x: 2, y: 2)
                 }
             }
             .onAppear {
