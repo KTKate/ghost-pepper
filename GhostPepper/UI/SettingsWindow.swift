@@ -157,6 +157,7 @@ struct SettingsView: View {
     @State private var permissionPollTimer: Timer?
     @State private var selectedSection: SettingsSection = .general
     @State private var transcriptionLabPreviewSound: NSSound?
+    @State private var isPlayingAudio = false
     @State private var recognizedVoices: [RecognizedVoiceProfile] = []
     @State private var recognizedVoiceSpeakerProfilesByID: [UUID: [TranscriptionLabSpeakerProfile]] = [:]
     @State private var recognizedVoicesErrorMessage: String?
@@ -461,7 +462,25 @@ struct SettingsView: View {
         let sound = NSSound(contentsOf: transcriptionLabController.audioURL(for: entry), byReference: false)
         transcriptionLabPreviewSound?.stop()
         transcriptionLabPreviewSound = sound
-        transcriptionLabPreviewSound?.play()
+        isPlayingAudio = true
+        
+        // Set up completion handler to reset playing state
+        sound?.play()
+        
+        // Monitor playback completion
+        DispatchQueue.global(qos: .userInitiated).async { [weak sound] in
+            while sound?.isPlaying == true {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            DispatchQueue.main.async {
+                self.isPlayingAudio = false
+            }
+        }
+    }
+    
+    private func stopTranscriptionLabAudio() {
+        transcriptionLabPreviewSound?.stop()
+        isPlayingAudio = false
     }
 
     private func copyTranscriptionLabTranscript(for entry: TranscriptionLabEntry) {
@@ -1097,10 +1116,15 @@ struct SettingsView: View {
             )
             TranscriptionLabSourceRecordingSummary(
                 entry: entry,
-                canPlayRecording: canPlayRecording
-            ) {
-                playTranscriptionLabAudio(for: entry)
-            }
+                canPlayRecording: canPlayRecording,
+                isPlaying: isPlayingAudio,
+                onPlay: {
+                    playTranscriptionLabAudio(for: entry)
+                },
+                onStop: {
+                    stopTranscriptionLabAudio()
+                }
+            )
             transcriptionLabTranscriptionStage(for: entry, originalSpeechModelName: originalSpeechModelName)
             transcriptionLabDiarizationStage(for: entry, originalSpeechModelName: originalSpeechModelName)
             transcriptionLabCleanupStage(for: entry)
@@ -2880,7 +2904,9 @@ private struct TranscriptionLabSettingsNotice: View {
 private struct TranscriptionLabSourceRecordingSummary: View {
     let entry: TranscriptionLabEntry
     let canPlayRecording: Bool
+    let isPlaying: Bool
     let onPlay: () -> Void
+    let onStop: () -> Void
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -2923,13 +2949,21 @@ private struct TranscriptionLabSourceRecordingSummary: View {
 
     private var playButton: some View {
         Button {
-            onPlay()
+            if isPlaying {
+                onStop()
+            } else {
+                onPlay()
+            }
         } label: {
-            Label("Play recording", systemImage: "play.fill")
+            if isPlaying {
+                Label("Stop recording", systemImage: "stop.fill")
+            } else {
+                Label("Play recording", systemImage: "play.fill")
+            }
         }
         .buttonStyle(.bordered)
         .disabled(!canPlayRecording)
-        .help(canPlayRecording ? "Play the saved recording" : "Playback is available for newly archived recordings")
+        .help(canPlayRecording ? (isPlaying ? "Stop playback" : "Play the saved recording") : "Playback is available for newly archived recordings")
     }
 }
 
