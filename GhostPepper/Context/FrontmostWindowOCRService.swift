@@ -13,7 +13,7 @@ final class FrontmostWindowOCRService {
     var sensitiveDebugLogger: ((DebugLogCategory, String) -> Void)?
 
     init(
-        permissionProvider: @escaping PermissionProvider = PermissionChecker.hasScreenRecordingPermission,
+        permissionProvider: @escaping PermissionProvider = { PermissionChecker.hasScreenRecordingPermission() },
         windowCaptureService: WindowCaptureServing = WindowCaptureService(),
         requestFactory: OCRRequestFactory = OCRRequestFactory()
     ) {

@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 import CoreAudio
 import ServiceManagement
+import UserNotifications
 
 enum AppStatus: String {
     case ready = "Ready"
@@ -1370,15 +1371,21 @@ class AppState: ObservableObject {
     }
 
     private func showMeetingNotification(title: String, message: String) {
-        let notification = NSUserNotification()
-        notification.title = title
-        notification.informativeText = message
-        notification.soundName = nil // Silent
-        NSUserNotificationCenter.default.deliver(notification)
-        
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = message
+        content.sound = nil // Silent
+
+        let requestID = UUID().uuidString
+        let request = UNNotificationRequest(identifier: requestID, content: content, trigger: nil)
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert]) { _, _ in
+            center.add(request, withCompletionHandler: nil)
+        }
+
         // Auto-dismiss after 3 seconds
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            NSUserNotificationCenter.default.removeDeliveredNotification(notification)
+            center.removeDeliveredNotifications(withIdentifiers: [requestID])
         }
     }
 

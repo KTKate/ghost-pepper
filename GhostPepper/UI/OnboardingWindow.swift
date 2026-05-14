@@ -446,15 +446,17 @@ struct SetupStep: View {
         guard permissionTimer == nil else { return }
 
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-            let accessibilityGrantedNow = PermissionChecker.checkAccessibility()
-            if accessibilityGrantedNow {
-                accessibilityGranted = true
-            }
+            Task { @MainActor in
+                let accessibilityGrantedNow = PermissionChecker.checkAccessibility()
+                if accessibilityGrantedNow {
+                    accessibilityGranted = true
+                }
 
-            screenRecordingPermission.refresh()
+                screenRecordingPermission.refresh()
 
-            if accessibilityGrantedNow && screenRecordingPermission.isGranted {
-                stopPermissionPolling()
+                if accessibilityGrantedNow && screenRecordingPermission.isGranted {
+                    stopPermissionPolling()
+                }
             }
         }
     }
