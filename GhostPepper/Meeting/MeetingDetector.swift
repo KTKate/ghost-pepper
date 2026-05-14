@@ -16,9 +16,15 @@ struct DetectedMeeting {
 @MainActor
 final class MeetingDetector {
     var onMeetingDetected: ((DetectedMeeting) -> Void)?
+    var debugLogger: ((DebugLogCategory, String) -> Void)?
 
     private var pollTimer: Timer?
     private var isRunning = false
+
+    /// Last frontmost bundle ID we logged. Used to suppress per-tick spam
+    /// when the frontmost app hasn't changed.
+    private var lastLoggedFrontmostBundleID: String?
+    private var pollCount = 0
 
     /// Bundle IDs that have been detected and dismissed this session (don't re-prompt).
     private var dismissedBundleIDs: Set<String> = []
@@ -87,8 +93,15 @@ final class MeetingDetector {
 
     /// Start polling for meeting apps.
     func start() {
-        guard !isRunning else { return }
+        guard !isRunning else {
+            debugLogger?(.model, "MeetingDetector: start() called but already running.")
+            return
+        }
         isRunning = true
+        pollCount = 0
+        lastLoggedFrontmostBundleID = nil
+
+        debugLogger?(.model, "MeetingDetector: starting — polling every 5s for known meeting apps and Teams power assertion.")
 
         // Poll every 5 seconds — cheap operation.
         pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
@@ -103,6 +116,9 @@ final class MeetingDetector {
 
     /// Stop polling.
     func stop() {
+        if isRunning {
+            debugLogger?(.model, "MeetingDetector: stopping after \(pollCount) poll(s).")
+        }
         isRunning = false
         pollTimer?.invalidate()
         pollTimer = nil
@@ -150,28 +166,31 @@ final class MeetingDetector {
     }
 
     private func checkForMeetingApps() {
+        pollCount += 1
+
         // Check Teams power assertion first — most reliable for Teams 2.0.
         // Only fire on transition from no-assertion to assertion-present.
         let teamsAssertionPresent = isTeamsCallActive()
-        
+
         // Clear dismissal when call ends so we can detect the next call
         if !teamsAssertionPresent && teamsAssertionWasPresentLastPoll {
             let teamsKey = "teams-assertion"
             dismissedBundleIDs.remove(teamsKey)
+            debugLogger?(.model, "MeetingDetector: Teams power assertion released; cleared dismissal so a new call can be detected.")
         }
-        
+
         if teamsAssertionPresent && !teamsAssertionWasPresentLastPoll {
             // Transition detected: Teams call just started.
             let teamsKey = "teams-assertion"
             if !dismissedBundleIDs.contains(teamsKey) {
-                // Try to get the actual meeting title from Teams windows
+                debugLogger?(.model, "MeetingDetector: Teams power assertion appeared — firing Microsoft Teams meeting.")
                 let teamsApp = NSWorkspace.shared.runningApplications.first {
                     $0.bundleIdentifier == "com.microsoft.teams2" || $0.bundleIdentifier == "com.microsoft.teams"
                 }
                 let titles = teamsApp.map { AccessibilityWindowTitles.all(for: $0) } ?? []
                 let suggestedName = MeetingWindowHeuristics.bestMeetingTitle(in: titles, appName: "Microsoft Teams")
                     ?? Self.suggestedMeetingName(appName: "Microsoft Teams")
-                
+
                 let meeting = DetectedMeeting(
                     appName: "Microsoft Teams",
                     bundleIdentifier: "com.microsoft.teams2",
@@ -180,24 +199,45 @@ final class MeetingDetector {
                 onMeetingDetected?(meeting)
                 // Dismiss AFTER callback so it can handle the detection
                 dismiss(bundleID: teamsKey)
+            } else {
+                debugLogger?(.model, "MeetingDetector: Teams power assertion appeared but key 'teams-assertion' is already dismissed this session; not firing.")
             }
         }
         teamsAssertionWasPresentLastPoll = teamsAssertionPresent
-        
+
         guard let frontmost = NSWorkspace.shared.frontmostApplication,
-              let frontmostBundleID = frontmost.bundleIdentifier else { return }
+              let frontmostBundleID = frontmost.bundleIdentifier else {
+            if lastLoggedFrontmostBundleID != "<none>" {
+                debugLogger?(.model, "MeetingDetector: poll #\(pollCount) — no frontmost application detected.")
+                lastLoggedFrontmostBundleID = "<none>"
+            }
+            return
+        }
+
+        // Log frontmost app on first poll and whenever it changes.
+        if frontmostBundleID != lastLoggedFrontmostBundleID {
+            let appName = frontmost.localizedName ?? "?"
+            let known = Self.knownMeetingApps[frontmostBundleID] != nil
+            let isBrowser = Self.browserBundleIDs.contains(frontmostBundleID)
+            debugLogger?(.model, "MeetingDetector: poll #\(pollCount) — frontmost=\(appName) [\(frontmostBundleID)] knownMeetingApp=\(known) isBrowser=\(isBrowser) teamsAssertion=\(teamsAssertionPresent)")
+            lastLoggedFrontmostBundleID = frontmostBundleID
+        }
 
         // Check known meeting apps — only when frontmost to avoid false positives
         // from Zoom/Teams running in the background.
         // Skip Teams here since we use power assertion detection above (more reliable).
-        if let appName = Self.knownMeetingApps[frontmostBundleID],
-           !dismissedBundleIDs.contains(frontmostBundleID) {
-            
-            // Skip Teams - we detect it via power assertion above
+        if let appName = Self.knownMeetingApps[frontmostBundleID] {
             if appName == "Microsoft Teams" {
+                // Detected via power assertion above; nothing to do here.
                 return
             }
-            
+
+            if dismissedBundleIDs.contains(frontmostBundleID) {
+                debugLogger?(.model, "MeetingDetector: \(appName) is frontmost but bundle '\(frontmostBundleID)' is already dismissed this session; not firing.")
+                return
+            }
+
+            debugLogger?(.model, "MeetingDetector: \(appName) [\(frontmostBundleID)] became frontmost — firing detection.")
             dismiss(bundleID: frontmostBundleID)
             let titles = AccessibilityWindowTitles.all(for: frontmost)
             let suggestedName = MeetingWindowHeuristics.bestMeetingTitle(in: titles, appName: appName)
@@ -217,22 +257,30 @@ final class MeetingDetector {
             let titles = AccessibilityWindowTitles.all(for: frontmost)
 
             // Check meetings first.
-            if !dismissedBundleIDs.contains("browser-meeting"),
-               let meetingName = matchMeetingPattern(in: titles) {
-                dismiss(bundleID: "browser-meeting")
-                let meeting = DetectedMeeting(
-                    appName: meetingName,
-                    bundleIdentifier: bundleID,
-                    suggestedName: Self.suggestedMeetingName(appName: meetingName)
-                )
-                onMeetingDetected?(meeting)
-                return
+            if let meetingName = matchMeetingPattern(in: titles) {
+                if dismissedBundleIDs.contains("browser-meeting") {
+                    debugLogger?(.model, "MeetingDetector: browser meeting '\(meetingName)' matched but 'browser-meeting' is already dismissed this session; not firing.")
+                } else {
+                    debugLogger?(.model, "MeetingDetector: browser meeting matched: \(meetingName) — firing.")
+                    dismiss(bundleID: "browser-meeting")
+                    let meeting = DetectedMeeting(
+                        appName: meetingName,
+                        bundleIdentifier: bundleID,
+                        suggestedName: Self.suggestedMeetingName(appName: meetingName)
+                    )
+                    onMeetingDetected?(meeting)
+                    return
+                }
             }
 
             // Check video sites.
             if let (siteName, videoTitle) = matchVideoSite(in: titles) {
                 let dismissKey = "video-\(siteName)"
-                guard !dismissedBundleIDs.contains(dismissKey) else { return }
+                if dismissedBundleIDs.contains(dismissKey) {
+                    debugLogger?(.model, "MeetingDetector: video site \(siteName) matched but '\(dismissKey)' is already dismissed this session; not firing.")
+                    return
+                }
+                debugLogger?(.model, "MeetingDetector: video site \(siteName) matched — firing.")
                 dismiss(bundleID: dismissKey)
 
                 let suggestedName: String

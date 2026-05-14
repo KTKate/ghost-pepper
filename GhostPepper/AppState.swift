@@ -1324,9 +1324,15 @@ class AppState: ObservableObject {
     }
 
     func setupMeetingDetector() {
+        debugLogStore.record(category: .model, message: "setupMeetingDetector: meetingTranscriptEnabled=\(meetingTranscriptEnabled) meetingAutoDetectEnabled=\(meetingAutoDetectEnabled) meetingAutoStartEnabled=\(meetingAutoStartEnabled)")
         guard meetingTranscriptEnabled, meetingAutoDetectEnabled else {
+            debugLogStore.record(category: .model, message: "setupMeetingDetector: gated off — stopping detector.")
             meetingDetector.stop()
             return
+        }
+
+        meetingDetector.debugLogger = { [weak debugLogStore] category, message in
+            debugLogStore?.record(category: category, message: message)
         }
 
         meetingDetector.onMeetingDetected = { [weak self] meeting in
