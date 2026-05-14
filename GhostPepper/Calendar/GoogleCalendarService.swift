@@ -324,7 +324,7 @@ private class LoopbackOAuthServer {
         // Get the assigned port
         var assignedAddr = sockaddr_in()
         var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-        withUnsafeMutablePointer(to: &assignedAddr) { ptr in
+        _ = withUnsafeMutablePointer(to: &assignedAddr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(serverSocket, $0, &len) }
         }
         let port = UInt16(bigEndian: assignedAddr.sin_port)

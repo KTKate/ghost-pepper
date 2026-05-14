@@ -92,7 +92,9 @@ final class MeetingDetector {
 
         // Poll every 5 seconds — cheap operation.
         pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.checkForMeetingApps()
+            Task { @MainActor in
+                self?.checkForMeetingApps()
+            }
         }
 
         // Also check immediately.

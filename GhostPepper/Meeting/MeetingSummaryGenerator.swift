@@ -12,12 +12,12 @@ final class MeetingSummaryGenerator {
     /// Maximum characters per chunk sent to the LLM (~1500 tokens ≈ 6000 chars).
     private let chunkCharLimit = 5000
 
-    static let defaultPrompt = """
+    nonisolated static let defaultPrompt = """
     Summarize the following meeting excerpt. Output concise bullet points organized by topic. \
     Include key facts, decisions, numbers, names, and dates. Be brief.
     """
 
-    static let finalSummaryPrompt = """
+    nonisolated static let finalSummaryPrompt = """
     You are summarizing a meeting. You will receive a transcript and optionally the user's own notes \
     taken during the meeting. Read both carefully, then produce a structured summary organized by topic.
 

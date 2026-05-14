@@ -331,7 +331,7 @@ final class MeetingSession: ObservableObject {
 
         Task {
             if let meetingApp {
-                meetingApp.activate(options: .activateIgnoringOtherApps)
+                meetingApp.activate()
                 // Wait for the window to come to front
                 try? await Task.sleep(nanoseconds: 800_000_000)
                 print("MeetingSession: Detect activated \(meetingApp.localizedName ?? "app") for OCR")
@@ -523,7 +523,8 @@ final class MeetingSession: ObservableObject {
             
             // Read in chunks with timeout
             while process.isRunning && Date().timeIntervalSince(startTime) < maxWaitTime {
-                if let chunk = try? fileHandle.availableData, !chunk.isEmpty {
+                let chunk = fileHandle.availableData
+                if !chunk.isEmpty {
                     data.append(chunk)
                 }
                 usleep(10_000) // 10ms

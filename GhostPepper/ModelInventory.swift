@@ -15,6 +15,7 @@ struct RuntimeModelRow: Identifiable, Equatable {
     let status: RuntimeModelStatus
 }
 
+@MainActor
 enum RuntimeModelInventory {
     static func rows(
         selectedSpeechModelName: String,

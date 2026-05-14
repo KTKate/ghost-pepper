@@ -48,11 +48,11 @@ final class SpeechTranscriber {
 
         // Serialize concurrent transcription requests
         return await withCheckedContinuation { continuation in
-            serialQueue.async { [semaphore] in
+            serialQueue.async { [semaphore, modelManager] in
                 semaphore.wait()
                 let task = Task {
                     defer { semaphore.signal() }
-                    return await self.modelManager.transcribe(audioBuffer: audioBuffer, language: language)
+                    return await modelManager.transcribe(audioBuffer: audioBuffer, language: language)
                 }
                 let result = Task {
                     await task.value
