@@ -135,8 +135,12 @@ final class MeetingDetector {
         teamsAssertionWasPresentLastPoll = false
     }
 
+    /// Track the last set of Teams-related pmset assertion lines we logged so
+    /// we only emit a debug entry when they change.
+    private var lastLoggedTeamsAssertionLines: String?
+
     // MARK: - Private
-    
+
     /// Returns true if Microsoft Teams currently holds a "Call in progress"
     /// power assertion. This is the most reliable signal for Teams 2.0 call
     /// state on macOS — Teams registers the assertion when a call starts and
@@ -154,12 +158,32 @@ final class MeetingDetector {
             try process.run()
             process.waitUntilExit()
         } catch {
+            debugLogger?(.model, "MeetingDetector: pmset failed to launch: \(error.localizedDescription)")
             return false
         }
 
         guard let data = try? pipe.fileHandleForReading.readToEnd(),
               let output = String(data: data, encoding: .utf8) else {
+            debugLogger?(.model, "MeetingDetector: pmset produced no readable output.")
             return false
+        }
+
+        // Diagnostic: log every line mentioning Teams/Microsoft so we can see
+        // exactly what assertions Teams is registering, in case the matched
+        // string has changed in a Teams update. Only log when the set of
+        // matching lines changes — prevents per-poll spam.
+        let teamsLines = output
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { String($0) }
+            .filter { $0.lowercased().contains("teams") || $0.lowercased().contains("microsoft") }
+            .joined(separator: " | ")
+        if teamsLines != lastLoggedTeamsAssertionLines {
+            lastLoggedTeamsAssertionLines = teamsLines
+            if teamsLines.isEmpty {
+                debugLogger?(.model, "MeetingDetector: pmset reports no Teams/Microsoft assertion lines right now.")
+            } else {
+                debugLogger?(.model, "MeetingDetector: pmset Teams/Microsoft lines changed → \(teamsLines)")
+            }
         }
 
         return output.contains("Microsoft Teams Call in progress")
