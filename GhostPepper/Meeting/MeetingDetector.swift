@@ -4,12 +4,11 @@ import Foundation
 
 /// Result of querying `pmset -g assertions` for Microsoft Teams call state.
 enum TeamsCallAssertionState {
-    /// pmset ran cleanly and reported a Teams "Call in progress" assertion.
+    /// pmset output contained the Teams "Call in progress" assertion.
     case callActive
-    /// pmset ran cleanly and reported no Teams call assertion.
+    /// pmset output was read and decoded, but no Teams call assertion.
     case noCall
-    /// pmset could not be launched, exited non-zero, or its output could
-    /// not be decoded. Callers decide their own fail-safe direction.
+    /// pmset could not be launched or its output could not be decoded.
     case unreadable
 }
 
@@ -19,28 +18,40 @@ enum TeamsCallAssertionState {
 /// buffer — so reading to EOF *before* `waitUntilExit()` is correct: the write
 /// end closes when pmset exits, so the read returns the complete output without
 /// the pipe-buffer deadlock or the truncation race the old chunked reader hit.
+///
+/// Deliberately does NOT gate on `terminationStatus`: pmset can exit non-zero
+/// while still printing valid assertion output, and the original working
+/// implementation never checked it. Gating on it was a regression that made
+/// every read look `.unreadable`.
 enum TeamsCallAssertion {
-    static func query() -> (state: TeamsCallAssertionState, teamsLines: String) {
+    /// - Returns: the parsed state plus a diagnostic string — the Teams/
+    ///   Microsoft assertion lines for `callActive`/`noCall`, or the failure
+    ///   reason for `unreadable`.
+    static func query() -> (state: TeamsCallAssertionState, diagnostic: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
         process.arguments = ["-g", "assertions"]
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()  // discard stderr
+        let outPipe = Pipe()
+        process.standardOutput = outPipe
+        // Discard stderr to /dev/null — an unread Pipe() could fill its 64 KB
+        // buffer and stall pmset.
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
-            return (.unreadable, "")
+            return (.unreadable, "launch failed: \(error.localizedDescription)")
         }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        guard process.terminationStatus == 0,
-              let output = String(data: data, encoding: .utf8) else {
-            return (.unreadable, "")
+        guard !data.isEmpty else {
+            return (.unreadable, "empty output (exit \(process.terminationStatus))")
+        }
+        guard let output = String(data: data, encoding: .utf8) else {
+            return (.unreadable, "non-UTF8 output (\(data.count) bytes, exit \(process.terminationStatus))")
         }
 
         let teamsLines = output
@@ -189,31 +200,42 @@ final class MeetingDetector {
         teamsAssertionWasPresentLastPoll = false
     }
 
-    /// Track the last diagnostic key (state + Teams lines) we logged so we
-    /// only emit a debug entry when it changes — prevents per-poll spam.
-    private var lastLoggedTeamsAssertionLines: String?
+    /// Last pmset state we logged, and a counter for the ~1-minute heartbeat.
+    /// We log on every state change AND periodically, so a *recurring* failure
+    /// (e.g. pmset persistently unreadable) stays visible instead of being
+    /// deduped to a single startup line.
+    private var lastLoggedPmsetState: String?
+    private var pmsetLogHeartbeat = 0
 
     // MARK: - Private
 
-    /// Returns true only when Teams cleanly holds a "Call in progress" power
+    /// Returns true only when pmset reports the Teams "Call in progress"
     /// assertion. For the *start* path the fail-safe is "not active": a
     /// transient pmset hiccup must never spuriously begin a recording. The
     /// next 5s poll retries, so a real call is still picked up promptly.
     private func isTeamsCallActive() -> Bool {
         let result = TeamsCallAssertion.query()
 
-        // Diagnostic: log the Teams/Microsoft assertion lines (and the state)
-        // when they change, so we can see exactly what Teams is registering.
-        let diagnosticKey = "\(result.state)|\(result.teamsLines)"
-        if diagnosticKey != lastLoggedTeamsAssertionLines {
-            lastLoggedTeamsAssertionLines = diagnosticKey
+        pmsetLogHeartbeat += 1
+        let stateKey: String
+        switch result.state {
+        case .callActive: stateKey = "callActive"
+        case .noCall: stateKey = "noCall"
+        case .unreadable: stateKey = "unreadable"
+        }
+        // ~once per minute at the 5s poll interval, plus on any change.
+        let heartbeat = pmsetLogHeartbeat % 12 == 0
+        if stateKey != lastLoggedPmsetState || heartbeat {
+            lastLoggedPmsetState = stateKey
             switch result.state {
+            case .callActive:
+                debugLogger?(.model, "MeetingDetector: pmset → Teams CALL ACTIVE [\(result.diagnostic)]")
+            case .noCall where result.diagnostic.isEmpty:
+                debugLogger?(.model, "MeetingDetector: pmset → readable, no Teams/Microsoft assertion present.")
+            case .noCall:
+                debugLogger?(.model, "MeetingDetector: pmset → Teams/Microsoft lines but no active call: \(result.diagnostic)")
             case .unreadable:
-                debugLogger?(.model, "MeetingDetector: pmset unreadable — treating as no Teams call this poll.")
-            case .noCall where result.teamsLines.isEmpty:
-                debugLogger?(.model, "MeetingDetector: pmset reports no Teams/Microsoft assertion lines right now.")
-            case .noCall, .callActive:
-                debugLogger?(.model, "MeetingDetector: pmset Teams/Microsoft lines → \(result.teamsLines)")
+                debugLogger?(.model, "MeetingDetector: pmset UNREADABLE — \(result.diagnostic) — treating as no call this poll.")
             }
         }
 
