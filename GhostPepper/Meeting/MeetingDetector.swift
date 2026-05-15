@@ -2,6 +2,60 @@ import AppKit
 import CoreAudio
 import Foundation
 
+/// Result of querying `pmset -g assertions` for Microsoft Teams call state.
+enum TeamsCallAssertionState {
+    /// pmset ran cleanly and reported a Teams "Call in progress" assertion.
+    case callActive
+    /// pmset ran cleanly and reported no Teams call assertion.
+    case noCall
+    /// pmset could not be launched, exited non-zero, or its output could
+    /// not be decoded. Callers decide their own fail-safe direction.
+    case unreadable
+}
+
+/// Shared, race-free query of the Teams "Call in progress" power assertion.
+///
+/// `pmset -g assertions` emits a few KB of ASCII — well under the 64 KB pipe
+/// buffer — so reading to EOF *before* `waitUntilExit()` is correct: the write
+/// end closes when pmset exits, so the read returns the complete output without
+/// the pipe-buffer deadlock or the truncation race the old chunked reader hit.
+enum TeamsCallAssertion {
+    static func query() -> (state: TeamsCallAssertionState, teamsLines: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        process.arguments = ["-g", "assertions"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()  // discard stderr
+
+        do {
+            try process.run()
+        } catch {
+            return (.unreadable, "")
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0,
+              let output = String(data: data, encoding: .utf8) else {
+            return (.unreadable, "")
+        }
+
+        let teamsLines = output
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+            .filter { $0.lowercased().contains("teams") || $0.lowercased().contains("microsoft") }
+            .joined(separator: " | ")
+
+        let state: TeamsCallAssertionState = output.contains("Microsoft Teams Call in progress")
+            ? .callActive
+            : .noCall
+        return (state, teamsLines)
+    }
+}
+
 /// Detected meeting app info.
 struct DetectedMeeting {
     let appName: String
@@ -135,58 +189,35 @@ final class MeetingDetector {
         teamsAssertionWasPresentLastPoll = false
     }
 
-    /// Track the last set of Teams-related pmset assertion lines we logged so
-    /// we only emit a debug entry when they change.
+    /// Track the last diagnostic key (state + Teams lines) we logged so we
+    /// only emit a debug entry when it changes — prevents per-poll spam.
     private var lastLoggedTeamsAssertionLines: String?
 
     // MARK: - Private
 
-    /// Returns true if Microsoft Teams currently holds a "Call in progress"
-    /// power assertion. This is the most reliable signal for Teams 2.0 call
-    /// state on macOS — Teams registers the assertion when a call starts and
-    /// releases it when the call ends.
+    /// Returns true only when Teams cleanly holds a "Call in progress" power
+    /// assertion. For the *start* path the fail-safe is "not active": a
+    /// transient pmset hiccup must never spuriously begin a recording. The
+    /// next 5s poll retries, so a real call is still picked up promptly.
     private func isTeamsCallActive() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        process.arguments = ["-g", "assertions"]
+        let result = TeamsCallAssertion.query()
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()  // discard stderr
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            debugLogger?(.model, "MeetingDetector: pmset failed to launch: \(error.localizedDescription)")
-            return false
-        }
-
-        guard let data = try? pipe.fileHandleForReading.readToEnd(),
-              let output = String(data: data, encoding: .utf8) else {
-            debugLogger?(.model, "MeetingDetector: pmset produced no readable output.")
-            return false
-        }
-
-        // Diagnostic: log every line mentioning Teams/Microsoft so we can see
-        // exactly what assertions Teams is registering, in case the matched
-        // string has changed in a Teams update. Only log when the set of
-        // matching lines changes — prevents per-poll spam.
-        let teamsLines = output
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .map { String($0) }
-            .filter { $0.lowercased().contains("teams") || $0.lowercased().contains("microsoft") }
-            .joined(separator: " | ")
-        if teamsLines != lastLoggedTeamsAssertionLines {
-            lastLoggedTeamsAssertionLines = teamsLines
-            if teamsLines.isEmpty {
+        // Diagnostic: log the Teams/Microsoft assertion lines (and the state)
+        // when they change, so we can see exactly what Teams is registering.
+        let diagnosticKey = "\(result.state)|\(result.teamsLines)"
+        if diagnosticKey != lastLoggedTeamsAssertionLines {
+            lastLoggedTeamsAssertionLines = diagnosticKey
+            switch result.state {
+            case .unreadable:
+                debugLogger?(.model, "MeetingDetector: pmset unreadable — treating as no Teams call this poll.")
+            case .noCall where result.teamsLines.isEmpty:
                 debugLogger?(.model, "MeetingDetector: pmset reports no Teams/Microsoft assertion lines right now.")
-            } else {
-                debugLogger?(.model, "MeetingDetector: pmset Teams/Microsoft lines changed → \(teamsLines)")
+            case .noCall, .callActive:
+                debugLogger?(.model, "MeetingDetector: pmset Teams/Microsoft lines → \(result.teamsLines)")
             }
         }
 
-        return output.contains("Microsoft Teams Call in progress")
+        return result.state == .callActive
     }
 
     private func checkForMeetingApps() {
