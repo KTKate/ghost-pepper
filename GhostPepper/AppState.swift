@@ -1335,6 +1335,16 @@ class AppState: ObservableObject {
             debugLogStore?.record(category: category, message: message)
         }
 
+        // Exclude Ghost Pepper's own mic/recording use so it isn't mistaken
+        // for a meeting (hotkey dictation, transcription, or an in-progress
+        // meeting recording).
+        meetingDetector.selfAudioActive = { [weak self] in
+            guard let self else { return false }
+            return self.status == .recording
+                || self.status == .transcribing
+                || self.activeMeetingSession != nil
+        }
+
         meetingDetector.onMeetingDetected = { [weak self] meeting in
             guard let self = self else { return }
             

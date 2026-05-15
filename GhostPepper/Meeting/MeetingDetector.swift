@@ -76,6 +76,49 @@ struct DetectedMeeting {
     var sourceURL: String? = nil
 }
 
+/// Frontmost-independent "is audio flowing" probe.
+///
+/// Uses CoreAudio's `kAudioDevicePropertyDeviceIsRunningSomewhere`, which is
+/// true whenever *any* process is actively using the default input or output
+/// device. A call lights up the mic (you're talking) and the speakers (you
+/// hear others) regardless of which window is on top — so this is a reliable
+/// "you're in a meeting" signal that never looks at the frontmost app.
+enum AudioActivityProbe {
+    static func isActive() -> Bool {
+        deviceRunning(defaultSelector: kAudioHardwarePropertyDefaultInputDevice)
+            || deviceRunning(defaultSelector: kAudioHardwarePropertyDefaultOutputDevice)
+    }
+
+    private static func deviceRunning(defaultSelector: AudioObjectPropertySelector) -> Bool {
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var defaultAddr = AudioObjectPropertyAddress(
+            mSelector: defaultSelector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &defaultAddr, 0, nil, &size, &deviceID
+        ) == noErr, deviceID != 0 else {
+            return false
+        }
+
+        var running: UInt32 = 0
+        var runSize = UInt32(MemoryLayout<UInt32>.size)
+        var runAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(
+            deviceID, &runAddr, 0, nil, &runSize, &running
+        ) == noErr else {
+            return false
+        }
+        return running != 0
+    }
+}
+
 /// Monitors for running meeting/video call apps and notifies when one is detected.
 /// Off by default — must be explicitly enabled via Settings.
 @MainActor
@@ -83,17 +126,21 @@ final class MeetingDetector {
     var onMeetingDetected: ((DetectedMeeting) -> Void)?
     var debugLogger: ((DebugLogCategory, String) -> Void)?
 
+    /// Returns true when Ghost Pepper itself is the reason audio is active
+    /// (hotkey dictation or an in-progress meeting recording), so mic/speaker
+    /// activity caused by the app is not mistaken for a new meeting.
+    var selfAudioActive: (() -> Bool)?
+
     private var pollTimer: Timer?
     private var isRunning = false
 
-    /// Last frontmost bundle ID we logged. Used to suppress per-tick spam
-    /// when the frontmost app hasn't changed.
-    private var lastLoggedFrontmostBundleID: String?
     private var pollCount = 0
+    private var audioWasActiveLastPoll = false
+    private var lastHeartbeatKey: String?
 
     /// Bundle IDs that have been detected and dismissed this session (don't re-prompt).
     private var dismissedBundleIDs: Set<String> = []
-    
+
     /// Track whether Teams power assertion was present in the last poll.
     /// Used to detect transitions from no-call to active-call.
     private var teamsAssertionWasPresentLastPoll = false
@@ -164,9 +211,10 @@ final class MeetingDetector {
         }
         isRunning = true
         pollCount = 0
-        lastLoggedFrontmostBundleID = nil
+        lastHeartbeatKey = nil
+        audioWasActiveLastPoll = false
 
-        debugLogger?(.model, "MeetingDetector: starting — polling every 5s for known meeting apps and Teams power assertion.")
+        debugLogger?(.model, "MeetingDetector: starting — polling every 5s (process list + audio activity + pmset; frontmost-independent).")
 
         // Poll every 5 seconds — cheap operation.
         pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
@@ -242,141 +290,137 @@ final class MeetingDetector {
         return result.state == .callActive
     }
 
+    /// Detection is intentionally frontmost-independent. It never looks at
+    /// which window is on top — meeting windows are usually in the background.
+    /// Signals, in priority order:
+    ///   1. Teams "Call in progress" power assertion (pmset) — instant, zero
+    ///      false positives, but Teams only registers it transiently.
+    ///   2. A known meeting app is *running* (process list) AND audio is
+    ///      flowing (mic/speaker active) AND it isn't Ghost Pepper's own
+    ///      recording — robust even when pmset misses the call.
+    ///   3. A browser is *running* with a meeting/video tab AND audio is
+    ///      flowing — windows read via Accessibility, not "frontmost".
     private func checkForMeetingApps() {
         pollCount += 1
 
-        // Check Teams power assertion first — most reliable for Teams 2.0.
-        // Only fire on transition from no-assertion to assertion-present.
+        // ---- Signal 1: Teams power assertion (fast path) ----
         let teamsAssertionPresent = isTeamsCallActive()
-
-        // Clear dismissal when call ends so we can detect the next call
         if !teamsAssertionPresent && teamsAssertionWasPresentLastPoll {
-            let teamsKey = "teams-assertion"
-            dismissedBundleIDs.remove(teamsKey)
-            debugLogger?(.model, "MeetingDetector: Teams power assertion released; cleared dismissal so a new call can be detected.")
+            dismissedBundleIDs.remove("teams-assertion")
+            debugLogger?(.model, "MeetingDetector: Teams power assertion released; cleared dismissal.")
         }
-
         if teamsAssertionPresent && !teamsAssertionWasPresentLastPoll {
-            // Transition detected: Teams call just started.
-            let teamsKey = "teams-assertion"
-            if !dismissedBundleIDs.contains(teamsKey) {
-                debugLogger?(.model, "MeetingDetector: Teams power assertion appeared — firing Microsoft Teams meeting.")
-                let teamsApp = NSWorkspace.shared.runningApplications.first {
-                    $0.bundleIdentifier == "com.microsoft.teams2" || $0.bundleIdentifier == "com.microsoft.teams"
-                }
-                let titles = teamsApp.map { AccessibilityWindowTitles.all(for: $0) } ?? []
-                let suggestedName = MeetingWindowHeuristics.bestMeetingTitle(in: titles, appName: "Microsoft Teams")
-                    ?? Self.suggestedMeetingName(appName: "Microsoft Teams")
-
-                let meeting = DetectedMeeting(
-                    appName: "Microsoft Teams",
-                    bundleIdentifier: "com.microsoft.teams2",
-                    suggestedName: suggestedName
-                )
-                onMeetingDetected?(meeting)
-                // Dismiss AFTER callback so it can handle the detection
-                dismiss(bundleID: teamsKey)
+            if dismissedBundleIDs.contains("teams-assertion") {
+                debugLogger?(.model, "MeetingDetector: Teams assertion appeared but already dismissed this session; not firing.")
             } else {
-                debugLogger?(.model, "MeetingDetector: Teams power assertion appeared but key 'teams-assertion' is already dismissed this session; not firing.")
+                debugLogger?(.model, "MeetingDetector: Teams power assertion appeared — firing Microsoft Teams meeting.")
+                fireMeeting(appName: "Microsoft Teams", bundleID: "com.microsoft.teams2", dismissKey: "teams-assertion")
             }
         }
         teamsAssertionWasPresentLastPoll = teamsAssertionPresent
 
-        guard let frontmost = NSWorkspace.shared.frontmostApplication,
-              let frontmostBundleID = frontmost.bundleIdentifier else {
-            if lastLoggedFrontmostBundleID != "<none>" {
-                debugLogger?(.model, "MeetingDetector: poll #\(pollCount) — no frontmost application detected.")
-                lastLoggedFrontmostBundleID = "<none>"
+        // ---- Audio-driven, frontmost-independent detection ----
+        let audioActive = AudioActivityProbe.isActive()
+        let selfActive = selfAudioActive?() ?? false
+
+        // When audio stops, clear audio-based dismissals so the next call
+        // re-detects (mirrors the pmset-release logic above).
+        if !audioActive && audioWasActiveLastPoll {
+            let cleared = dismissedBundleIDs.filter { $0.hasPrefix("audio:") }
+            if !cleared.isEmpty {
+                dismissedBundleIDs.subtract(cleared)
+                debugLogger?(.model, "MeetingDetector: audio went idle; cleared audio-based dismissals so the next call re-detects.")
             }
+        }
+        audioWasActiveLastPoll = audioActive
+
+        // Signal heartbeat — reports the signals actually used (NOT what is
+        // on top). Logged on change and ~once per minute.
+        let heartbeatKey = "\(audioActive)|\(selfActive)|\(teamsAssertionPresent)"
+        if heartbeatKey != lastHeartbeatKey || pollCount % 12 == 0 {
+            lastHeartbeatKey = heartbeatKey
+            debugLogger?(.model, "MeetingDetector: poll #\(pollCount) — audioActive=\(audioActive) selfRecording=\(selfActive) pmsetTeamsCall=\(teamsAssertionPresent)")
+        }
+
+        guard audioActive else { return }
+        guard !selfActive else {
+            // Ghost Pepper's own dictation/recording is the audio source.
             return
         }
 
-        // Log frontmost app on first poll and whenever it changes.
-        if frontmostBundleID != lastLoggedFrontmostBundleID {
-            let appName = frontmost.localizedName ?? "?"
-            let known = Self.knownMeetingApps[frontmostBundleID] != nil
-            let isBrowser = Self.browserBundleIDs.contains(frontmostBundleID)
-            debugLogger?(.model, "MeetingDetector: poll #\(pollCount) — frontmost=\(appName) [\(frontmostBundleID)] knownMeetingApp=\(known) isBrowser=\(isBrowser) teamsAssertion=\(teamsAssertionPresent)")
-            lastLoggedFrontmostBundleID = frontmostBundleID
-        }
+        let running = NSWorkspace.shared.runningApplications
 
-        // Check known meeting apps — only when frontmost to avoid false positives
-        // from Zoom/Teams running in the background.
-        // Skip Teams here since we use power assertion detection above (more reliable).
-        if let appName = Self.knownMeetingApps[frontmostBundleID] {
-            if appName == "Microsoft Teams" {
-                // Detected via power assertion above; nothing to do here.
-                return
-            }
-
-            if dismissedBundleIDs.contains(frontmostBundleID) {
-                debugLogger?(.model, "MeetingDetector: \(appName) is frontmost but bundle '\(frontmostBundleID)' is already dismissed this session; not firing.")
-                return
-            }
-
-            debugLogger?(.model, "MeetingDetector: \(appName) [\(frontmostBundleID)] became frontmost — firing detection.")
-            dismiss(bundleID: frontmostBundleID)
-            let titles = AccessibilityWindowTitles.all(for: frontmost)
-            let suggestedName = MeetingWindowHeuristics.bestMeetingTitle(in: titles, appName: appName)
-                ?? Self.suggestedMeetingName(appName: appName)
-            let meeting = DetectedMeeting(
-                appName: appName,
-                bundleIdentifier: frontmostBundleID,
-                suggestedName: suggestedName
-            )
-            onMeetingDetected?(meeting)
+        // ---- Signal 2: a known meeting app is running + audio active ----
+        for app in running {
+            guard let bundleID = app.bundleIdentifier,
+                  let appName = Self.knownMeetingApps[bundleID] else { continue }
+            let dismissKey = "audio:\(bundleID)"
+            if dismissedBundleIDs.contains(dismissKey) { continue }
+            debugLogger?(.model, "MeetingDetector: \(appName) is running and audio is active — firing (frontmost-independent).")
+            fireMeeting(appName: appName, bundleID: bundleID, dismissKey: dismissKey, app: app)
             return
         }
 
-        // Check browsers for meeting URLs or video sites.
-        if Self.browserBundleIDs.contains(frontmostBundleID) {
-            let bundleID = frontmostBundleID
-            let titles = AccessibilityWindowTitles.all(for: frontmost)
+        // ---- Signal 3: a running browser has a meeting/video tab ----
+        for app in running {
+            guard let bundleID = app.bundleIdentifier,
+                  Self.browserBundleIDs.contains(bundleID) else { continue }
+            let titles = AccessibilityWindowTitles.all(for: app)
 
-            // Check meetings first.
             if let meetingName = matchMeetingPattern(in: titles) {
-                if dismissedBundleIDs.contains("browser-meeting") {
-                    debugLogger?(.model, "MeetingDetector: browser meeting '\(meetingName)' matched but 'browser-meeting' is already dismissed this session; not firing.")
-                } else {
-                    debugLogger?(.model, "MeetingDetector: browser meeting matched: \(meetingName) — firing.")
-                    dismiss(bundleID: "browser-meeting")
-                    let meeting = DetectedMeeting(
-                        appName: meetingName,
-                        bundleIdentifier: bundleID,
-                        suggestedName: Self.suggestedMeetingName(appName: meetingName)
-                    )
-                    onMeetingDetected?(meeting)
-                    return
-                }
+                let key = "audio:browser-meeting"
+                if dismissedBundleIDs.contains(key) { continue }
+                debugLogger?(.model, "MeetingDetector: browser meeting '\(meetingName)' + audio active — firing.")
+                dismiss(bundleID: key)
+                onMeetingDetected?(DetectedMeeting(
+                    appName: meetingName,
+                    bundleIdentifier: bundleID,
+                    suggestedName: Self.suggestedMeetingName(appName: meetingName)
+                ))
+                return
             }
 
-            // Check video sites.
             if let (siteName, videoTitle) = matchVideoSite(in: titles) {
-                let dismissKey = "video-\(siteName)"
-                if dismissedBundleIDs.contains(dismissKey) {
-                    debugLogger?(.model, "MeetingDetector: video site \(siteName) matched but '\(dismissKey)' is already dismissed this session; not firing.")
-                    return
-                }
-                debugLogger?(.model, "MeetingDetector: video site \(siteName) matched — firing.")
-                dismiss(bundleID: dismissKey)
-
-                let suggestedName: String
-                if let videoTitle = videoTitle {
-                    suggestedName = "\(siteName) — \(videoTitle)"
-                } else {
-                    suggestedName = Self.suggestedMeetingName(appName: siteName)
-                }
-                let url = browserURL(app: frontmost)
-                let meeting = DetectedMeeting(
+                let key = "audio:video-\(siteName)"
+                if dismissedBundleIDs.contains(key) { continue }
+                debugLogger?(.model, "MeetingDetector: video site \(siteName) + audio active — firing.")
+                dismiss(bundleID: key)
+                let suggestedName = videoTitle.map { "\(siteName) — \($0)" }
+                    ?? Self.suggestedMeetingName(appName: siteName)
+                onMeetingDetected?(DetectedMeeting(
                     appName: siteName,
                     bundleIdentifier: bundleID,
                     suggestedName: suggestedName,
                     isVideo: true,
-                    sourceURL: url
-                )
-                onMeetingDetected?(meeting)
+                    sourceURL: browserURL(app: app)
+                ))
+                return
             }
         }
+    }
+
+    /// Fire a detected meeting for a known native app, pulling the meeting
+    /// title from that app's windows via Accessibility (works on a background
+    /// app — it does not need to be frontmost).
+    private func fireMeeting(
+        appName: String,
+        bundleID: String,
+        dismissKey: String,
+        app: NSRunningApplication? = nil
+    ) {
+        let resolvedApp = app ?? NSWorkspace.shared.runningApplications.first {
+            $0.bundleIdentifier == bundleID
+                || (appName == "Microsoft Teams" && $0.bundleIdentifier == "com.microsoft.teams")
+        }
+        let titles = resolvedApp.map { AccessibilityWindowTitles.all(for: $0) } ?? []
+        let suggestedName = MeetingWindowHeuristics.bestMeetingTitle(in: titles, appName: appName)
+            ?? Self.suggestedMeetingName(appName: appName)
+        onMeetingDetected?(DetectedMeeting(
+            appName: appName,
+            bundleIdentifier: bundleID,
+            suggestedName: suggestedName
+        ))
+        dismiss(bundleID: dismissKey)
     }
 
     /// Get all window titles from a browser app.
