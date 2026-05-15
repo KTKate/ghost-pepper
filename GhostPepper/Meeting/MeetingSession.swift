@@ -502,67 +502,18 @@ final class MeetingSession: ObservableObject {
     }
     
     /// Returns true if Microsoft Teams currently holds a "Call in progress"
-    /// power assertion. This is the most reliable signal for Teams 2.0 call state.
+    /// power assertion. For the *stop* path the fail-safe is "still active":
+    /// a momentary failure to read pmset must never end an in-progress
+    /// recording. Only a clean "no call" reading stops the session.
     private func isTeamsCallActive() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        process.arguments = ["-g", "assertions"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            
-            // Read output with timeout to avoid blocking
-            let fileHandle = pipe.fileHandleForReading
-            var data = Data()
-            let maxWaitTime: TimeInterval = 2.0
-            let startTime = Date()
-            
-            // Read in chunks with timeout
-            while process.isRunning && Date().timeIntervalSince(startTime) < maxWaitTime {
-                let chunk = fileHandle.availableData
-                if !chunk.isEmpty {
-                    data.append(chunk)
-                }
-                usleep(10_000) // 10ms
-            }
-            
-            // Wait for process to finish (with timeout)
-            let remainingTime = maxWaitTime - Date().timeIntervalSince(startTime)
-            if remainingTime > 0 && process.isRunning {
-                DispatchQueue.global().asyncAfter(deadline: .now() + remainingTime) {
-                    if process.isRunning {
-                        process.terminate()
-                    }
-                }
-                process.waitUntilExit()
-            }
-            
-            // Read any remaining data
-            if let finalChunk = try? fileHandle.readToEnd() {
-                data.append(finalChunk)
-            }
-            
-            // If pmset failed, assume call is still active (fail-safe)
-            guard process.terminationStatus == 0 else {
-                print("MeetingSession: pmset failed with status \(process.terminationStatus), assuming call active")
-                return true
-            }
-            
-            guard let output = String(data: data, encoding: .utf8) else {
-                print("MeetingSession: pmset output unreadable (\(data.count) bytes), assuming call active")
-                return true
-            }
-
-            let isActive = output.contains("Microsoft Teams Call in progress")
-            print("MeetingSession: Teams call check: \(isActive ? "ACTIVE" : "INACTIVE")")
-            return isActive
-            
-        } catch {
-            print("MeetingSession: pmset error: \(error.localizedDescription), assuming call active")
+        let result = TeamsCallAssertion.query()
+        switch result.state {
+        case .callActive:
+            return true
+        case .noCall:
+            return false
+        case .unreadable:
+            print("MeetingSession: pmset unreadable, assuming Teams call still active")
             return true
         }
     }
