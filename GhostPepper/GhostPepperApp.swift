@@ -1,8 +1,49 @@
 import SwiftUI
 import Combine
+import AppKit
 
 class LazyUpdaterController {
     lazy var controller = UpdaterController()
+}
+
+/// Builds the menu bar glyph with a red "recording" dot, like the badge
+/// Microsoft Teams shows while in a call.
+///
+/// `MenuBarExtra` renders its label as a *template* (monochrome) image, so a
+/// SwiftUI `Circle().fill(.red)` overlay is stripped to the menu bar tint and
+/// never appears red. To get a real colored dot we composite an `NSImage`
+/// ourselves and mark it non-template so AppKit draws it as-is.
+enum MenuBarIconRenderer {
+    static func recordingBadgedIcon() -> NSImage {
+        let base = NSImage(named: "MenuBarIcon") ?? NSImage(size: NSSize(width: 18, height: 18))
+        let size = base.size
+        let image = NSImage(size: size)
+
+        image.lockFocus()
+        let rect = NSRect(origin: .zero, size: size)
+
+        // Tint the template glyph to the current label color so it stays
+        // legible in both light and dark menu bars.
+        base.draw(in: rect)
+        NSColor.labelColor.set()
+        rect.fill(using: .sourceAtop)
+
+        // Red recording dot in the bottom-trailing corner.
+        let diameter = max(5, size.width * 0.36)
+        let dotRect = NSRect(
+            x: size.width - diameter,
+            y: 0,
+            width: diameter,
+            height: diameter
+        )
+        NSColor.systemRed.setFill()
+        NSBezierPath(ovalIn: dotRect).fill()
+        image.unlockFocus()
+
+        // Non-template so the red survives the menu bar's monochrome tinting.
+        image.isTemplate = false
+        return image
+    }
 }
 
 @main
@@ -28,12 +69,19 @@ struct GhostPepperApp: App {
                 MenuBarView(appState: appState, updaterController: lazyUpdater.controller)
             }
         } label: {
-            ZStack(alignment: .bottomTrailing) {
-                Group {
+            let isRecording = appState.activeMeetingSession != nil
+                || appState.status == .recording
+                || appState.status == .transcribing
+                || appState.status == .cleaningUp
+
+            Group {
+                if isRecording {
+                    // Glyph + red dot (composited NSImage so the dot is
+                    // actually red in the menu bar).
+                    Image(nsImage: MenuBarIconRenderer.recordingBadgedIcon())
+                        .renderingMode(.original)
+                } else {
                     switch appState.status {
-                    case .recording:
-                        Image("MenuBarIconRedDim")
-                            .renderingMode(.original)
                     case .loading:
                         Image(systemName: "ellipsis.circle")
                             .symbolRenderingMode(.palette)
@@ -46,14 +94,6 @@ struct GhostPepperApp: App {
                         Image("MenuBarIcon")
                             .renderingMode(.template)
                     }
-                }
-                
-                // Red dot indicator when meeting is active
-                if appState.activeMeetingSession != nil {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 6, height: 6)
-                        .offset(x: 2, y: 2)
                 }
             }
             .onAppear {
