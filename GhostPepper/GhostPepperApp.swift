@@ -12,7 +12,9 @@ class LazyUpdaterController {
 /// `MenuBarExtra` renders its label as a *template* (monochrome) image, so a
 /// SwiftUI `Circle().fill(.red)` overlay is stripped to the menu bar tint and
 /// never appears red. To get a real colored dot we composite an `NSImage`
-/// ourselves and mark it non-template so AppKit draws it as-is.
+/// ourselves and mark it non-template so AppKit draws it as-is. Going
+/// non-template also opts out of AppKit's automatic light/dark menu-bar
+/// tinting, so we tint the glyph ourselves to match the other icons.
 enum MenuBarIconRenderer {
     static func recordingBadgedIcon() -> NSImage {
         let base = NSImage(named: "MenuBarIcon") ?? NSImage(size: NSSize(width: 18, height: 18))
@@ -22,14 +24,18 @@ enum MenuBarIconRenderer {
         image.lockFocus()
         let rect = NSRect(origin: .zero, size: size)
 
-        // Tint the template glyph to the current label color so it stays
-        // legible in both light and dark menu bars.
+        // `NSColor.labelColor` resolves against the app's (light) appearance
+        // inside lockFocus and renders black on a dark menu bar. Pick white/
+        // black from the *effective* appearance so the glyph matches every
+        // other menu-bar icon's automatic tinting.
+        let glyphColor: NSColor = NSApp.effectiveAppearance
+            .bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .white : .black
         base.draw(in: rect)
-        NSColor.labelColor.set()
+        glyphColor.set()
         rect.fill(using: .sourceAtop)
 
         // Red recording dot in the bottom-trailing corner.
-        let diameter = max(5, size.width * 0.36)
+        let diameter = max(7, size.width * 0.5)
         let dotRect = NSRect(
             x: size.width - diameter,
             y: 0,
