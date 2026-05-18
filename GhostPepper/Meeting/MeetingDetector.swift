@@ -8,7 +8,7 @@ enum TeamsCallAssertionState {
     case callActive
     /// pmset output was read and decoded, but no Teams call assertion.
     case noCall
-    /// pmset could not be launched or its output could not be decoded.
+    /// pmset could not be launched, or produced no output at all.
     case unreadable
 }
 
@@ -50,9 +50,14 @@ enum TeamsCallAssertion {
         guard !data.isEmpty else {
             return (.unreadable, "empty output (exit \(process.terminationStatus))")
         }
-        guard let output = String(data: data, encoding: .utf8) else {
-            return (.unreadable, "non-UTF8 output (\(data.count) bytes, exit \(process.terminationStatus))")
-        }
+        // pmset lists every process holding a power assertion system-wide, so
+        // an unrelated process's name can carry non-UTF8 bytes. Strict UTF-8
+        // decoding returns nil on a single bad byte anywhere in the buffer,
+        // which marked every read .unreadable and (on the stop path) pinned
+        // recordings on forever. We only scan for the ASCII marker
+        // "Microsoft Teams Call in progress", so repair invalid sequences
+        // (→ U+FFFD) instead of failing the whole read.
+        let output = String(decoding: data, as: UTF8.self)
 
         let teamsLines = output
             .split(separator: "\n", omittingEmptySubsequences: true)

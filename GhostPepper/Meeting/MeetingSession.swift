@@ -41,6 +41,11 @@ final class MeetingSession: ObservableObject {
     private let originalName: String
     private let ocrService: FrontmostWindowOCRService
     private var inactiveMeetingPollCount = 0
+    /// Consecutive `.unreadable` pmset polls on the stop path. A short streak
+    /// is tolerated as a transient hiccup; past the cap the session ends so a
+    /// genuinely broken pmset can't pin a recording on indefinitely.
+    private var unreadablePmsetPollCount = 0
+    private static let maxUnreadablePmsetPolls = 6  // ~30s at the 5s poll
     private let echoCancellationConfig: EchoCancellationEngine.Configuration
 
     init(
@@ -187,6 +192,7 @@ final class MeetingSession: ObservableObject {
         meetingEndCheckTimer?.invalidate()
         meetingEndCheckTimer = nil
         inactiveMeetingPollCount = 0
+        unreadablePmsetPollCount = 0
 
         print("MeetingSession: stopped '\(transcript.meetingName)' — \(transcript.segments.count) segments, \(transcript.formattedDuration)")
     }
@@ -472,14 +478,29 @@ final class MeetingSession: ObservableObject {
               let detectedMeetingAppName,
               let detectedMeetingBundleIdentifier else { return }
 
-        // For Teams, check power assertion (most reliable)
+        // For Teams, the power assertion is the most reliable signal.
         if detectedMeetingAppName == "Microsoft Teams" {
-            if !isTeamsCallActive() {
+            let result = TeamsCallAssertion.query()
+            switch result.state {
+            case .callActive:
+                inactiveMeetingPollCount = 0
+                unreadablePmsetPollCount = 0
+            case .noCall:
+                unreadablePmsetPollCount = 0
                 inactiveMeetingPollCount += 1
                 guard inactiveMeetingPollCount >= 2 else { return }
                 requestAutomaticStop(reason: "Teams call ended (power assertion released)")
-            } else {
-                inactiveMeetingPollCount = 0
+            case .unreadable:
+                // A momentary pmset hiccup must not end an in-progress
+                // recording, but a *sustained* failure must not pin it on
+                // forever either (the bug that recorded long past the
+                // meeting). Tolerate a short streak, then end the session.
+                unreadablePmsetPollCount += 1
+                guard unreadablePmsetPollCount >= Self.maxUnreadablePmsetPolls else {
+                    print("MeetingSession: pmset unreadable (\(result.diagnostic)) — tolerating \(unreadablePmsetPollCount)/\(Self.maxUnreadablePmsetPolls)")
+                    return
+                }
+                requestAutomaticStop(reason: "pmset unreadable for \(unreadablePmsetPollCount) polls (\(result.diagnostic))")
             }
             return
         }
@@ -501,28 +522,12 @@ final class MeetingSession: ObservableObject {
         requestAutomaticStop(reason: "meeting windows no longer look active")
     }
     
-    /// Returns true if Microsoft Teams currently holds a "Call in progress"
-    /// power assertion. For the *stop* path the fail-safe is "still active":
-    /// a momentary failure to read pmset must never end an in-progress
-    /// recording. Only a clean "no call" reading stops the session.
-    private func isTeamsCallActive() -> Bool {
-        let result = TeamsCallAssertion.query()
-        switch result.state {
-        case .callActive:
-            return true
-        case .noCall:
-            return false
-        case .unreadable:
-            print("MeetingSession: pmset unreadable, assuming Teams call still active")
-            return true
-        }
-    }
-
     private func requestAutomaticStop(reason: String) {
         guard isActive else { return }
         meetingEndCheckTimer?.invalidate()
         meetingEndCheckTimer = nil
         inactiveMeetingPollCount = 0
+        unreadablePmsetPollCount = 0
         print("MeetingSession: automatic stop requested — \(reason)")
         if let onAutoStopRequested {
             onAutoStopRequested(self)
