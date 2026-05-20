@@ -418,8 +418,9 @@ final class MeetingDetector {
                 || (appName == "Microsoft Teams" && $0.bundleIdentifier == "com.microsoft.teams")
         }
         let titles = resolvedApp.map { AccessibilityWindowTitles.all(for: $0) } ?? []
-        let suggestedName = MeetingWindowHeuristics.bestMeetingTitle(in: titles, appName: appName)
-            ?? Self.suggestedMeetingName(appName: appName)
+        let pickedTitle = MeetingWindowHeuristics.bestMeetingTitle(in: titles, appName: appName)
+        let suggestedName = pickedTitle ?? Self.suggestedMeetingName(appName: appName)
+        print("MeetingTitleDiag[fireMeeting]: app=\(appName) bundle=\(bundleID) appResolved=\(resolvedApp != nil) titleCount=\(titles.count) titles=\(titles) picked=\(pickedTitle ?? "nil") usingFallback=\(pickedTitle == nil)")
         onMeetingDetected?(DetectedMeeting(
             appName: appName,
             bundleIdentifier: bundleID,
