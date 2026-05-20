@@ -1229,14 +1229,14 @@ struct SettingsView: View {
             "Diarization",
             isExpanded: $isDiarizationStageExpanded
         ) {
-            Text(entry.speakerFilteringRan ? "Original tagged" : "Original off")
+            Text(entry.diarizationSummary != nil ? "Original tagged" : "Original off")
             Text(transcriptionLabController.originalDiarizationVisualization == nil ? "No timeline" : "Timeline available")
             Text(originalSpeechModelName)
         } content: {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Original model and options")
                     .font(.subheadline.weight(.medium))
-                Text(entry.speakerFilteringRan
+                Text(entry.diarizationSummary != nil
                      ? "Speaker tagging ran with \(originalSpeechModelName)."
                      : "Speaker tagging was off for the original transcription.")
                     .font(.caption)
