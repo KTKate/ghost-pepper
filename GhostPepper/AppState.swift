@@ -1458,6 +1458,7 @@ class AppState: ObservableObject {
                 speechModelID: speechModel,
                 cleanupModelName: "Meeting transcript",
                 cleanupUsedFallback: false,
+                diarizationSummary: Self.diarizationSummary(from: transcript.segments),
                 externalAudioPath: audioURL.path
             )
             try transcriptionLabStore.insertExternal(
@@ -1477,6 +1478,30 @@ class AppState: ObservableObject {
                 message: "Failed to archive meeting to lab: \(error.localizedDescription)"
             )
         }
+    }
+
+    /// Build a `DiarizationSummary` from the speaker tags the meeting pipeline
+    /// already produced live (dual-stream Me / Others). We don't rerun the
+    /// diarizer here, so the filtering-specific fields stay zeroed — that's
+    /// what "Rerun speaker tagging" in the lab is for.
+    private static func diarizationSummary(from segments: [TranscriptSegment]) -> DiarizationSummary? {
+        guard !segments.isEmpty else { return nil }
+        let spans = segments.map { segment in
+            DiarizationSummary.Span(
+                speakerID: segment.speaker.displayName,
+                startTime: segment.startTime,
+                endTime: segment.endTime
+            )
+        }
+        return DiarizationSummary(
+            spans: spans,
+            mergedKeptSpans: [],
+            targetSpeakerID: nil,
+            targetSpeakerDuration: 0,
+            keptAudioDuration: 0,
+            usedFallback: false,
+            fallbackReason: nil
+        )
     }
 
     /// Mix the mic + system chunks for a meeting into a single mono audio
