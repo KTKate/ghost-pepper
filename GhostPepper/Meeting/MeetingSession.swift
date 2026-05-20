@@ -247,9 +247,15 @@ final class MeetingSession: ObservableObject {
     /// Try to update the meeting title from the detected meeting app,
     /// or by scanning known meeting apps if none was detected.
     private func autoUpdateTitleFromDetectedMeetingApp() {
-        guard !hasAutoUpdatedTitle, isActive else { return }
+        guard !hasAutoUpdatedTitle, isActive else {
+            print("MeetingTitleDiag[retry]: skip — hasAutoUpdatedTitle=\(hasAutoUpdatedTitle) isActive=\(isActive)")
+            return
+        }
         // Only update if user hasn't edited the name
-        guard transcript.meetingName == originalName else { return }
+        guard transcript.meetingName == originalName else {
+            print("MeetingTitleDiag[retry]: skip — user-edited (current='\(transcript.meetingName)' original='\(originalName)')")
+            return
+        }
 
         // Try the detected app first, then fall back to scanning known meeting apps
         let appsToCheck: [(app: NSRunningApplication, name: String)]
@@ -263,15 +269,18 @@ final class MeetingSession: ObservableObject {
                 return (app, app.localizedName ?? "Meeting")
             }
         }
+        print("MeetingTitleDiag[retry]: checking \(appsToCheck.count) app(s) for '\(originalName)' (detectedBundle=\(detectedMeetingBundleIdentifier ?? "nil"))")
 
         for (meetingApp, appName) in appsToCheck {
             let titles = AccessibilityWindowTitles.all(for: meetingApp)
-            if let cleaned = MeetingWindowHeuristics.bestAutoUpdateTitle(
+            let picked = MeetingWindowHeuristics.bestAutoUpdateTitle(
                 in: titles,
                 appName: appName,
                 observedBundleIdentifier: meetingApp.bundleIdentifier,
                 monitoredBundleIdentifier: meetingApp.bundleIdentifier
-            ) {
+            )
+            print("MeetingTitleDiag[retry]: app=\(appName) bundle=\(meetingApp.bundleIdentifier ?? "?") titleCount=\(titles.count) titles=\(titles) picked=\(picked ?? "nil")")
+            if let cleaned = picked {
                 hasAutoUpdatedTitle = true
                 transcript.meetingName = cleaned
                 print("MeetingSession: auto-updated title to '\(cleaned)' from \(appName)")
