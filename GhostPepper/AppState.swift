@@ -65,7 +65,7 @@ class AppState: ObservableObject {
         }
     }
     @AppStorage("cleanupEnabled") var cleanupEnabled: Bool = true
-    @AppStorage("transcriptionLabEnabled") var transcriptionLabEnabled: Bool = false
+    @AppStorage("transcriptionLabEnabled") var transcriptionLabEnabled: Bool = true
     @AppStorage("cleanupPrompt") var cleanupPrompt: String = TextCleaner.defaultPrompt
     @AppStorage("speechModel") var speechModel: String = SpeechModelCatalog.defaultModelID
     @AppStorage("preferredLanguage") var preferredLanguage: String = "auto"
