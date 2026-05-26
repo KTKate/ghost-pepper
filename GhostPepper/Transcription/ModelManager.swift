@@ -267,19 +267,34 @@ final class ModelManager: ObservableObject {
             }
             session.appendAudioChunk(audioBuffer)
 
-            for audioChunk in Self.audioChunks(
+            // CoreML inference inside `diarizer.process` is synchronous and
+            // CPU-heavy. `ModelManager` is @MainActor, so running this loop
+            // here would freeze the UI for the whole rerun (the live recording
+            // path doesn't hit this because audio chunks arrive on a non-main
+            // audio thread). Hop to a detached task so the work runs off main.
+            let chunks = Self.audioChunks(
                 from: audioBuffer,
                 maxCount: Self.speakerTaggingChunkSizeSamples
-            ) {
-                do {
-                    _ = try diarizer.process(samples: audioChunk)
-                } catch {
-                    debugLogger?(
-                        .model,
-                        "Speaker tagging diarization chunk failed: \(error.localizedDescription)"
-                    )
+            )
+            let logger = debugLogger
+            logger?(.model, "Speaker tagging: processing \(chunks.count) audio chunks off main")
+            let processStart = Date()
+            await Task.detached(priority: .userInitiated) {
+                for audioChunk in chunks {
+                    do {
+                        _ = try diarizer.process(samples: audioChunk)
+                    } catch {
+                        logger?(
+                            .model,
+                            "Speaker tagging diarization chunk failed: \(error.localizedDescription)"
+                        )
+                    }
                 }
-            }
+            }.value
+            debugLogger?(
+                .model,
+                "Speaker tagging: chunk processing complete in \(String(format: "%.1f", Date().timeIntervalSince(processStart)))s"
+            )
 
             diarizer.timeline.finalize()
             let segments = diarizer.timeline.speakers.values
