@@ -72,6 +72,26 @@ enum SpeechModelCatalog {
         fluidAudioVariant: nil
     )
 
+    static let whisperMediumEnglish = SpeechModelDescriptor(
+        name: "openai_whisper-medium.en",
+        pickerTitle: "High accuracy",
+        variantName: "medium.en",
+        sizeDescription: "~1.5 GB",
+        backend: .whisperKit,
+        cachePathComponents: ["openai", "whisper-medium.en"],
+        fluidAudioVariant: nil
+    )
+
+    static let whisperLargeV3Turbo = SpeechModelDescriptor(
+        name: "openai_whisper-large-v3-turbo",
+        pickerTitle: "Best",
+        variantName: "large-v3-turbo",
+        sizeDescription: "~1.6 GB",
+        backend: .whisperKit,
+        cachePathComponents: ["openai", "whisper-large-v3-turbo"],
+        fluidAudioVariant: nil
+    )
+
     static let parakeetV3 = SpeechModelDescriptor(
         name: "fluid_parakeet-v3",
         pickerTitle: "Parakeet v3",
@@ -97,6 +117,8 @@ enum SpeechModelCatalog {
         whisperTiny,
         whisperSmallEnglish,
         whisperSmallMultilingual,
+        whisperMediumEnglish,
+        whisperLargeV3Turbo,
         parakeetV3,
     ]
 
