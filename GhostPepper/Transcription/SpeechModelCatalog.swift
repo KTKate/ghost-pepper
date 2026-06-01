@@ -83,12 +83,12 @@ enum SpeechModelCatalog {
     )
 
     static let whisperLargeV3Turbo = SpeechModelDescriptor(
-        name: "openai_whisper-large-v3-turbo",
+        name: "openai_whisper-large-v3_turbo",
         pickerTitle: "Best",
         variantName: "large-v3-turbo",
         sizeDescription: "~1.6 GB",
         backend: .whisperKit,
-        cachePathComponents: ["openai", "whisper-large-v3-turbo"],
+        cachePathComponents: ["openai", "whisper-large-v3_turbo"],
         fluidAudioVariant: nil
     )
 
